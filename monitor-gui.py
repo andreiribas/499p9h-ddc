@@ -37,10 +37,12 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 MONITOR = os.path.join(HERE, "monitor")
 STATE_FILE = os.path.join(GLib.get_user_config_dir(), "monitor-ctl", "state.json")
 
-# (label shown, name the `monitor` script understands). The monitor reports its
-# USB-C port as "DisplayPort-1" (VCP 60 = 0x0f) and the real DisplayPort
-# connector as "DisplayPort-2" (0x10); checked by switching to 0x0f while a
-# laptop was plugged into USB-C.
+# (label shown, name the `monitor` script understands). The labels are the ones in
+# the monitor's own menu. Over DDC the monitor reports its USB-C port as
+# "DisplayPort-1" (VCP 60 = 0x0f) and the DisplayPort connector as
+# "DisplayPort-2" (0x10), and numbers the HDMI ports the other way round: menu
+# "HDMI 2" is 0x11 and menu "HDMI 1" is 0x12. All checked by plugging a laptop in
+# and switching to each value.
 SOURCES = [
     ("HDMI-1", "hdmi1"),
     ("HDMI-2", "hdmi2"),
@@ -49,10 +51,17 @@ SOURCES = [
 ]
 # names saved by older versions of the app (same VCP values, different labels)
 OLD_NAMES = {"dp1": "usbc", "dp2": "dp"}
+# Until names_version 2 the HDMI inputs were numbered as DDC numbers them, which is
+# the other way round from the monitor's menu; saved choices are swapped once so
+# they keep pointing at the same physical input.
+SWAP_HDMI = {"hdmi1": "hdmi2", "hdmi2": "hdmi1"}
+NAMES_VERSION = 2
 # poll_seconds: how often PBP is re-read in the background, so changes made from
 # another computer or the monitor's buttons show up (0 = never)
 DEFAULT_POLL_SECONDS = 5
 PBP_SUBTITLE = "Two inputs side by side"
+# The monitor only answers the computer whose input it is showing.
+NO_LINK_SUBTITLE = "Not answering: the monitor is probably showing another input"
 
 
 # The monitor handles one DDC command at a time: a background check must not
@@ -105,6 +114,12 @@ def load_state():
     except (OSError, ValueError):
         saved = {}
     saved = {k: OLD_NAMES.get(v, v) if isinstance(v, str) else v for k, v in saved.items()}
+    if saved.get("names_version") != NAMES_VERSION:
+        for k in ("single", "left", "right", "connected_to"):
+            if isinstance(saved.get(k), str):
+                saved[k] = SWAP_HDMI.get(saved[k], saved[k])
+        if isinstance(saved.get("visible"), list):
+            saved["visible"] = [SWAP_HDMI.get(x, x) for x in saved["visible"]]
     keys = [k for _, k in SOURCES]
     # Where this computer is plugged in: what the user set, else a guess. The
     # pickers start there, because the monitor can't tell us which input it shows.
@@ -113,8 +128,16 @@ def load_state():
     if this not in keys:
         detected = detect_connection()
         this = detected or "hdmi1"
+    # Which inputs the pickers offer: what the user ticked in Options (default all),
+    # and always this computer's own input.
+    visible = saved.get("visible")
+    if not isinstance(visible, list) or not [k for k in keys if k in visible]:
+        visible = list(keys)
+    visible = [k for k in keys if k in visible or k == this]
     state = {
+        "names_version": NAMES_VERSION,
         "connected_to": this,
+        "visible": visible,
         "single": saved.get("single", this),
         "left": saved.get("left", this),
         "right": saved.get("right", "hdmi1" if this == "usbc" else "usbc"),
@@ -218,11 +241,29 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     # ---- building blocks -------------------------------------------------
 
+    def visible_sources(self):
+        """(label, key) of the inputs the pickers offer, in the monitor's order."""
+        return [(n, k) for n, k in SOURCES if k in self.state["visible"]]
+
     def source_row(self, title, key):
-        row = Adw.ComboRow(title=title, model=Gtk.StringList.new([name for name, _ in SOURCES]))
-        keys = [k for _, k in SOURCES]
+        vis = self.visible_sources()
+        row = Adw.ComboRow(title=title, model=Gtk.StringList.new([n for n, _ in vis]))
+        keys = [k for _, k in vis]
         row.set_selected(keys.index(self.state[key]) if self.state[key] in keys else 0)
         return row
+
+    def set_visible_inputs(self, keys):
+        """Change which inputs the three pickers offer, keeping each one's choice
+        when it is still offered."""
+        rows = (self.single_row, self.left_row, self.right_row)
+        current = [self.key_of(r) for r in rows]
+        self.state["visible"] = keys
+        vis = self.visible_sources()
+        labels, vkeys = [n for n, _ in vis], [k for _, k in vis]
+        for row, cur in zip(rows, current):
+            row.set_model(Gtk.StringList.new(labels))
+            row.set_selected(vkeys.index(cur) if cur in vkeys else 0)
+        self.remember()
 
     def button_row(self, *buttons):
         row = Adw.ActionRow()
@@ -236,9 +277,8 @@ class MonitorWindow(Adw.ApplicationWindow):
         row.set_child(box)
         return row
 
-    @staticmethod
-    def key_of(row):
-        return SOURCES[row.get_selected()][1]
+    def key_of(self, row):
+        return self.visible_sources()[row.get_selected()][1]
 
     # ---- state / busy ----------------------------------------------------
 
@@ -299,7 +339,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                 if announce:
                     self.toast("Read from the monitor: PBP is off")
             else:
-                self.pbp_row.set_subtitle("Can't reach the monitor right now")
+                self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
                 self.toast(text or "The monitor did not answer")
 
         self.run_async(["status"], done)
@@ -321,11 +361,15 @@ class MonitorWindow(Adw.ApplicationWindow):
     def set_connected_to(self, key):
         """The user says where this computer is plugged in: show it in the pickers too."""
         self.state["connected_to"] = key
-        keys = [k for _, k in SOURCES]
+        if key not in self.state["visible"]:  # this computer's input is always offered
+            self.set_visible_inputs([k for _, k in SOURCES if k in self.state["visible"] or k == key])
+        keys = [k for _, k in self.visible_sources()]
         self.single_row.set_selected(keys.index(key))
         self.left_row.set_selected(keys.index(key))
         if self.right_row.get_selected() == keys.index(key):  # not the same input on both halves
-            self.right_row.set_selected(keys.index("hdmi1" if key == "usbc" else "usbc"))
+            others = [i for i, k in enumerate(keys) if k != key]
+            if others:
+                self.right_row.set_selected(others[0])
         self.remember()
 
     def show_options(self):
@@ -354,9 +398,40 @@ class MonitorWindow(Adw.ApplicationWindow):
         keys = [k for _, k in SOURCES]
         conn = Adw.ComboRow(title="Connected to", model=Gtk.StringList.new([n for n, _ in SOURCES]))
         conn.set_selected(keys.index(self.state["connected_to"]))
-        conn.connect("notify::selected", lambda r, _p: self.set_connected_to(keys[r.get_selected()]))
         here.add(conn)
         page.add(here)
+
+        shown = Adw.PreferencesGroup(
+            title="Inputs shown",
+            description="The pickers offer only the inputs ticked here. This computer's own "
+            "input is always shown.",
+        )
+        switches = {}
+
+        def refresh_switches():
+            for k, sw in switches.items():
+                mine = k == self.state["connected_to"]
+                sw.set_sensitive(not mine)
+                if mine:
+                    sw.set_active(True)
+
+        def on_switch(_row, _p):
+            self.set_visible_inputs([k for _, k in SOURCES if switches[k].get_active()])
+
+        for name, k in SOURCES:
+            sw = Adw.SwitchRow(title=name, active=k in self.state["visible"])
+            switches[k] = sw
+            shown.add(sw)
+        refresh_switches()
+        for sw in switches.values():
+            sw.connect("notify::active", on_switch)
+        page.add(shown)
+
+        def on_connected(r, _p):
+            self.set_connected_to(keys[r.get_selected()])
+            refresh_switches()
+
+        conn.connect("notify::selected", on_connected)
 
         dialog.add(page)
         dialog.present(self)
@@ -383,7 +458,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.set_pbp(False)
                 self.pbp_row.set_subtitle(PBP_SUBTITLE)
             else:
-                self.pbp_row.set_subtitle("Can't reach the monitor right now")
+                self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
             return False
 
         threading.Thread(target=work, daemon=True).start()

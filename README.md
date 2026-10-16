@@ -45,7 +45,7 @@ monitor left <source>           same as input
 monitor layout <left> <right>   set both windows (PBP on)
 ```
 
-Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector). The monitor itself reports them as DisplayPort-1 (`dp1`, which is the USB-C port) and DisplayPort-2 (`dp2`, the DisplayPort connector). A GNOME shortcut works well for
+Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as in the monitor's own menu. Over DDC the monitor numbers them differently: its USB-C port is "DisplayPort-1" (`dp1`), the DisplayPort connector is "DisplayPort-2" (`dp2`), and menu "HDMI 1" / "HDMI 2" are DDC values 0x12 / 0x11 (checked on one monitor by plugging a laptop in and switching to each value). A GNOME shortcut works well for
 `monitor swap`.
 
 ## App
@@ -88,7 +88,7 @@ other Philips owners reported them; they were confirmed on this monitor.
 
 **Careful when writing unknown VCP codes.** Everything here only writes codes
 that were confirmed. A wrong write can leave both halves on the same input
-(fix: `monitor left hdmi1`) or switch PBP off, which you may then have to turn
+(fix: `monitor left <the input this computer is on>`) or switch PBP off, which you may then have to turn
 on again with `monitor pbp on`.
 
 ## License

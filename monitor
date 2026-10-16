@@ -22,6 +22,11 @@ ddc() { ddcutil --model "$MODEL" "$@"; }
 
 die() { echo "monitor: $*" >&2; exit 1; }
 
+# Shown when a command fails because the monitor does not answer. A computer can
+# only control the monitor while its own input is the one showing: on any other
+# input the monitor stops answering that computer's cable altogether.
+NO_LINK="the monitor is not answering this computer. It is probably showing another input. Switch it back from the computer it is showing, or with the monitor's buttons"
+
 # Last byte of the brief reply (ddcutil may print unrelated notices first),
 # e.g. "VCP 60 SNC x11" -> "11".
 getvcp_low() {
@@ -76,17 +81,21 @@ wait_for_pbp() {
   return 1
 }
 
-# hdmi1|hdmi2|dp|usbc -> VCP 60 value, or empty if it isn't one of them
+# hdmi1|hdmi2|usbc|dp -> VCP 60 value, or empty if it isn't one of them. The
+# names follow the monitor's own menu, which numbers the HDMI ports the other
+# way round from DDC: menu "HDMI 1" is 0x12 and menu "HDMI 2" is 0x11 (a laptop
+# on the port the menu calls HDMI 2 shows up when VCP 60 is set to 0x11). USB-C
+# is 0x0f and the DisplayPort connector 0x10.
 input_value() {
   case "$1" in
-    hdmi1) echo 0x11 ;; hdmi2) echo 0x12 ;; usbc | dp1) echo 0x0f ;; dp | dp2) echo 0x10 ;;
+    hdmi1) echo 0x12 ;; hdmi2) echo 0x11 ;; usbc | dp1) echo 0x0f ;; dp | dp2) echo 0x10 ;;
   esac
 }
 
 
 case "${1:-}" in
   status)
-    v=$(read_pbp) || die "no answer from the monitor (is DDC/CI on, cable connected?)"
+    v=$(read_pbp) || die "$NO_LINK (also check that DDC/CI is on in the monitor menu)"
     if [ "$v" != 0 ]; then echo "PBP: on"; else echo "PBP: off"; fi
     ;;
   pbp)
@@ -131,13 +140,14 @@ case "${1:-}" in
     "$0" status 2>&1
     ;;
   swap)
-    pbp_is_on || die "PBP is off, nothing to swap (turn PBP on in the monitor menu)"
-    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed"
+    v=$(read_pbp) || die "$NO_LINK"
+    [ "$v" != 0 ] || die "PBP is off, nothing to swap (turn PBP on in the monitor menu)"
+    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed: $NO_LINK"
     ;;
   input | left)
     v=$(input_value "${2:-}")
     [ -n "$v" ] || die "usage: monitor $1 hdmi1|hdmi2|dp|usbc"
-    ddc setvcp 60 "$v" >/dev/null 2>&1 || die "could not set the input"
+    ddc setvcp 60 "$v" >/dev/null 2>&1 || die "could not set the input: $NO_LINK"
     ;;
   layout)
     # Only the left window has an input code (60), and reading it back is NOT
@@ -146,12 +156,13 @@ case "${1:-}" in
     # input is now on the right), then put the left input on the left.
     l=$(input_value "${2:-}"); r=$(input_value "${3:-}")
     [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp|usbc)"
-    pbp_is_on || die "PBP is off, there are no two windows (monitor pbp on)"
-    ddc setvcp 60 "$r" >/dev/null 2>&1 || die "could not set the right input"
+    v=$(read_pbp) || die "$NO_LINK"
+    [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
+    ddc setvcp 60 "$r" >/dev/null 2>&1 || die "could not set the right input: $NO_LINK"
     sleep 2
-    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed"
+    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed: $NO_LINK"
     sleep 2
-    ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input"
+    ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input: $NO_LINK"
     ;;
   *)
     sed -n '7,14p' "$0" | sed 's/^# \{0,1\}//'

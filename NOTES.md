@@ -82,3 +82,12 @@ USB-C it read 0 ("on") while the monitor showed one picture, and `A5` read 0 the
 `A5` (window mode, read with `getvcp A5 --verbose`, field `cur_val`): 0 = one screen,
 256 = PBP. It agreed with reality from both laptops, so `status`, `pbp on|off`,
 `swap` and `layout` now use A5. `monitor doctor` prints both for comparison.
+
+## HDMI numbering follows the monitor's menu, not DDC
+
+A laptop on the port the monitor's menu calls "HDMI 2" appears when VCP 60 is set to
+0x11, which DDC calls HDMI-1. So the tool and the app now use the menu's names:
+`hdmi1` = 0x12, `hdmi2` = 0x11 (they were the other way round before). The app's saved
+settings carry a `names_version`; files without it are swapped once on load so each choice
+keeps pointing at the same physical input.
+
