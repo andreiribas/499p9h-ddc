@@ -65,6 +65,10 @@ or a left and a right picker, Swap and Apply.
 | KVM (USB upstream) switch | **no code found**, still needs the monitor's buttons |
 | Reading which input a window shows | **unreliable**: code `60` has reported the wrong input |
 
+The app also needs to know which input *this* computer is plugged into, so its source
+pickers start there. It guesses from the video port (HDMI is HDMI-1; DisplayPort or
+USB-C is USB-C) and the Options menu has "Connected to" to correct it per computer.
+
 Because the inputs can't be read back, the app shows what you last applied
 (`~/.config/monitor-ctl/state.json`), and `monitor status` only reports PBP
 (VCP `A5`: 0 = one screen, 256 = PBP), which is reliable. If you change inputs with the

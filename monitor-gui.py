@@ -7,8 +7,10 @@ The monitor cannot reliably report which inputs it is showing (see NOTES.md),
 so the source pickers show what was last applied from here, remembered in
 ~/.config/monitor-ctl/state.json. Only PBP on/off is read from the monitor.
 """
+import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -49,7 +51,7 @@ SOURCES = [
 OLD_NAMES = {"dp1": "usbc", "dp2": "dp"}
 # poll_seconds: how often PBP is re-read in the background, so changes made from
 # another computer or the monitor's buttons show up (0 = never)
-DEFAULTS = {"single": "hdmi1", "left": "hdmi1", "right": "usbc", "poll_seconds": 5}
+DEFAULT_POLL_SECONDS = 5
 PBP_SUBTITLE = "Two inputs side by side"
 
 
@@ -69,19 +71,61 @@ def run_monitor(*args):
     return r.returncode == 0, text
 
 
+def detect_connection(root="/sys/class/drm"):
+    """Guess which monitor input this computer is plugged into, from the video
+    connector the 499P9 is on: HDMI -> HDMI-1; DisplayPort or USB-C -> USB-C
+    (laptops rarely have a full-size DisplayPort). Only a guess: the Options
+    menu can override it. Returns None if the monitor isn't found, which also
+    happens while the monitor shows another input (this cable then reads as
+    disconnected): so the first successful guess is saved."""
+    for status in glob.glob(os.path.join(root, "card*-*/status")):
+        conn = os.path.dirname(status)
+        name = os.path.basename(conn).split("-", 1)[1]  # e.g. HDMI-A-1, DP-3
+        try:
+            with open(status) as f:
+                if f.read().strip() != "connected":
+                    continue
+            with open(os.path.join(conn, "edid"), "rb") as f:
+                edid = f.read()
+        except OSError:
+            continue
+        if b"PHL 499P9" not in edid:
+            continue
+        if name.startswith("HDMI"):
+            return "hdmi1"
+        if name.startswith(("DP-", "USB")):
+            return "usbc"
+    return None
+
+
 def load_state():
     try:
         with open(STATE_FILE) as f:
             saved = json.load(f)
     except (OSError, ValueError):
         saved = {}
-    state = {k: saved.get(k, v) for k, v in DEFAULTS.items()}
-    for key in ("single", "left", "right"):
-        state[key] = OLD_NAMES.get(state[key], state[key])
+    saved = {k: OLD_NAMES.get(v, v) if isinstance(v, str) else v for k, v in saved.items()}
+    keys = [k for _, k in SOURCES]
+    # Where this computer is plugged in: what the user set, else a guess. The
+    # pickers start there, because the monitor can't tell us which input it shows.
+    this = saved.get("connected_to")
+    detected = None
+    if this not in keys:
+        detected = detect_connection()
+        this = detected or "hdmi1"
+    state = {
+        "connected_to": this,
+        "single": saved.get("single", this),
+        "left": saved.get("left", this),
+        "right": saved.get("right", "hdmi1" if this == "usbc" else "usbc"),
+        "poll_seconds": saved.get("poll_seconds", DEFAULT_POLL_SECONDS),
+    }
     try:
         state["poll_seconds"] = max(0, min(300, int(state["poll_seconds"])))
     except (TypeError, ValueError):
-        state["poll_seconds"] = DEFAULTS["poll_seconds"]
+        state["poll_seconds"] = DEFAULT_POLL_SECONDS
+    if detected:
+        save_state(state)  # keep the guess for when the monitor shows another input
     return state
 
 
@@ -274,6 +318,16 @@ class MonitorWindow(Adw.ApplicationWindow):
         save_state(self.state)
         self.arm_poll()
 
+    def set_connected_to(self, key):
+        """The user says where this computer is plugged in: show it in the pickers too."""
+        self.state["connected_to"] = key
+        keys = [k for _, k in SOURCES]
+        self.single_row.set_selected(keys.index(key))
+        self.left_row.set_selected(keys.index(key))
+        if self.right_row.get_selected() == keys.index(key):  # not the same input on both halves
+            self.right_row.set_selected(keys.index("hdmi1" if key == "usbc" else "usbc"))
+        self.remember()
+
     def show_options(self):
         dialog = Adw.PreferencesDialog(title="Options")
         page = Adw.PreferencesPage()
@@ -290,6 +344,20 @@ class MonitorWindow(Adw.ApplicationWindow):
         row.connect("notify::value", lambda r, _p: self.set_poll_seconds(int(r.get_value())))
         group.add(row)
         page.add(group)
+
+        here = Adw.PreferencesGroup(
+            title="This computer",
+            description="Which monitor input this computer is plugged into. The monitor can't "
+            "report it, so the app guesses from the video port; correct it here if it's wrong. "
+            "The source pickers start there.",
+        )
+        keys = [k for _, k in SOURCES]
+        conn = Adw.ComboRow(title="Connected to", model=Gtk.StringList.new([n for n, _ in SOURCES]))
+        conn.set_selected(keys.index(self.state["connected_to"]))
+        conn.connect("notify::selected", lambda r, _p: self.set_connected_to(keys[r.get_selected()]))
+        here.add(conn)
+        page.add(here)
+
         dialog.add(page)
         dialog.present(self)
 
