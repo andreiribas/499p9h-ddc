@@ -29,26 +29,40 @@ except ModuleNotFoundError:
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 MONITOR = os.path.join(HERE, "monitor")
 STATE_FILE = os.path.join(GLib.get_user_config_dir(), "monitor-ctl", "state.json")
 
-# (label shown, name the `monitor` script understands)
+# (label shown, name the `monitor` script understands). The monitor reports its
+# USB-C port as "DisplayPort-1" (VCP 60 = 0x0f) and the real DisplayPort
+# connector as "DisplayPort-2" (0x10); checked by switching to 0x0f while a
+# laptop was plugged into USB-C.
 SOURCES = [
     ("HDMI-1", "hdmi1"),
     ("HDMI-2", "hdmi2"),
-    ("DisplayPort-1", "dp1"),
-    ("DisplayPort-2", "dp2"),
+    ("USB-C", "usbc"),
+    ("DisplayPort", "dp"),
 ]
-DEFAULTS = {"single": "hdmi1", "left": "hdmi1", "right": "dp2"}
+# names saved by older versions of the app (same VCP values, different labels)
+OLD_NAMES = {"dp1": "usbc", "dp2": "dp"}
+# poll_seconds: how often PBP is re-read in the background, so changes made from
+# another computer or the monitor's buttons show up (0 = never)
+DEFAULTS = {"single": "hdmi1", "left": "hdmi1", "right": "usbc", "poll_seconds": 5}
+PBP_SUBTITLE = "Two inputs side by side"
+
+
+# The monitor handles one DDC command at a time: a background check must not
+# overlap with a button press.
+_monitor_lock = threading.Lock()
 
 
 def run_monitor(*args):
     """Run the `monitor` script. Returns (ok, message)."""
     try:
-        r = subprocess.run([MONITOR, *args], capture_output=True, text=True, timeout=90)
+        with _monitor_lock:
+            r = subprocess.run([MONITOR, *args], capture_output=True, text=True, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     text = (r.stdout + r.stderr).strip()
@@ -61,7 +75,14 @@ def load_state():
             saved = json.load(f)
     except (OSError, ValueError):
         saved = {}
-    return {k: saved.get(k, v) for k, v in DEFAULTS.items()}
+    state = {k: saved.get(k, v) for k, v in DEFAULTS.items()}
+    for key in ("single", "left", "right"):
+        state[key] = OLD_NAMES.get(state[key], state[key])
+    try:
+        state["poll_seconds"] = max(0, min(300, int(state["poll_seconds"])))
+    except (TypeError, ValueError):
+        state["poll_seconds"] = DEFAULTS["poll_seconds"]
+    return state
 
 
 def save_state(state):
@@ -79,21 +100,29 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.state = load_state()
         self.busy = False
         self.updating = False  # True while the UI is being set from code
+        self.polling = False  # a background check is running
+        self.poll_source = None  # id of the repeating background-check timer
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Read PBP state from the monitor")
-        refresh.connect("clicked", lambda _b: self.read_status())
+        refresh.connect("clicked", lambda _b: self.read_status(announce=True))
         header.pack_start(refresh)
+        menu = Gio.Menu()
+        menu.append("Options", "win.options")
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True))
         self.spinner = Gtk.Spinner()
         header.pack_end(self.spinner)
+        options = Gio.SimpleAction.new("options", None)
+        options.connect("activate", lambda _a, _p: self.show_options())
+        self.add_action(options)
 
         page = Adw.PreferencesPage()
 
         mode = Adw.PreferencesGroup(title="Mode")
         self.pbp_row = Adw.SwitchRow(
             title="Picture by picture (PBP)",
-            subtitle="Two inputs side by side",
+            subtitle=PBP_SUBTITLE,
         )
         self.pbp_row.connect("notify::active", self.on_pbp_toggled)
         mode.add(self.pbp_row)
@@ -137,6 +166,11 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         self.set_pbp(False)  # until the monitor answers
         self.read_status()
+
+        # Another computer (or the monitor's buttons) can change PBP, so keep
+        # checking: periodically, and whenever this window gets focus again.
+        self.arm_poll()
+        self.connect("notify::is-active", lambda w, _p: w.is_active() and w.poll_status())
 
     # ---- building blocks -------------------------------------------------
 
@@ -184,11 +218,11 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=text, timeout=3))
 
     def remember(self):
-        self.state = {
-            "single": self.key_of(self.single_row),
-            "left": self.key_of(self.left_row),
-            "right": self.key_of(self.right_row),
-        }
+        self.state.update(
+            single=self.key_of(self.single_row),
+            left=self.key_of(self.left_row),
+            right=self.key_of(self.right_row),
+        )
         save_state(self.state)
 
     def run_async(self, args, done):
@@ -208,16 +242,84 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     # ---- actions ---------------------------------------------------------
 
-    def read_status(self):
+    def read_status(self, announce=False):
         def done(ok, text):
             if ok and "PBP: on" in text:
                 self.set_pbp(True)
+                self.pbp_row.set_subtitle(PBP_SUBTITLE)
+                if announce:
+                    self.toast("Read from the monitor: PBP is on")
             elif ok and "PBP: off" in text:
                 self.set_pbp(False)
+                self.pbp_row.set_subtitle(PBP_SUBTITLE)
+                if announce:
+                    self.toast("Read from the monitor: PBP is off")
             else:
+                self.pbp_row.set_subtitle("Can't reach the monitor right now")
                 self.toast(text or "The monitor did not answer")
 
         self.run_async(["status"], done)
+
+    def arm_poll(self):
+        """(Re)start the background-check timer with the current interval."""
+        if self.poll_source is not None:
+            GLib.source_remove(self.poll_source)
+            self.poll_source = None
+        seconds = self.state["poll_seconds"]
+        if seconds > 0:
+            self.poll_source = GLib.timeout_add_seconds(seconds, self.poll_status)
+
+    def set_poll_seconds(self, seconds):
+        self.state["poll_seconds"] = seconds
+        save_state(self.state)
+        self.arm_poll()
+
+    def show_options(self):
+        dialog = Adw.PreferencesDialog(title="Options")
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(
+            title="Background refresh",
+            description="How often the app re-reads the PBP state from the monitor, "
+            "so changes made from another computer or the monitor's buttons show up. "
+            "0 turns it off (the refresh button still works).",
+        )
+        row = Adw.SpinRow.new_with_range(0, 300, 1)
+        row.set_title("Refresh interval")
+        row.set_subtitle("seconds")
+        row.set_value(self.state["poll_seconds"])
+        row.connect("notify::value", lambda r, _p: self.set_poll_seconds(int(r.get_value())))
+        group.add(row)
+        page.add(group)
+        dialog.add(page)
+        dialog.present(self)
+
+    def poll_status(self):
+        """Quietly re-read PBP from the monitor (no spinner, no toast).
+        Returns True so it can also be used as a repeating timer."""
+        if self.busy or self.polling:
+            return True
+        self.polling = True
+
+        def work():
+            ok, text = run_monitor("status")
+            GLib.idle_add(finish, ok, text)
+
+        def finish(ok, text):
+            self.polling = False
+            if self.busy:  # the user started something meanwhile: it wins
+                return False
+            if ok and "PBP: on" in text:
+                self.set_pbp(True)
+                self.pbp_row.set_subtitle(PBP_SUBTITLE)
+            elif ok and "PBP: off" in text:
+                self.set_pbp(False)
+                self.pbp_row.set_subtitle(PBP_SUBTITLE)
+            else:
+                self.pbp_row.set_subtitle("Can't reach the monitor right now")
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
 
     def on_pbp_toggled(self, row, _param):
         if self.updating or self.busy:

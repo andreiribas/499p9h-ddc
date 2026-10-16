@@ -53,3 +53,16 @@ setvcp 60 0x11`).
 - `monitor-gui.py`: GTK4/libadwaita app (launcher: Monitor Control, app id org.phl499p9h.guisettings). PBP
   switch, one source picker (PBP off) or left/right pickers (PBP on), Swap,
   Apply. Remembers what was last applied in ~/.config/monitor-ctl/state.json.
+
+## Input names
+
+The monitor's input list (VCP 60) has no "USB-C": it reports HDMI-1 (0x11), HDMI-2
+(0x12), DisplayPort-1 (0x0f) and DisplayPort-2 (0x10). **USB-C is DisplayPort-1
+(0x0f) and the real DisplayPort connector is DisplayPort-2 (0x10).** Checked by
+switching to 0x0f while a laptop was plugged in with USB-C and seeing it. (An
+earlier note said the opposite: it was based on a test made while that laptop was
+on the DisplayPort cable.) The app and `monitor` call them "USB-C"/`usbc` and
+"DisplayPort"/`dp`; `dp1` = `usbc` and `dp2` = `dp` still work.
+
+`monitor status` reads E6 on the I2C bus remembered in ~/.cache/monitor-ctl/bus
+(0.25 s instead of ~1.6 s); the app polls it every 5 s by default (Options menu).

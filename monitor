@@ -7,9 +7,10 @@
 #   monitor status          PBP on/off
 #   monitor pbp on|off      turn PBP on / off
 #   monitor swap            swap the left and right windows (PBP only)
-#   monitor input <source>  input of the screen (PBP off) / left window (PBP on)
+#   monitor input <source>  input of the screen (PBP off) / left window (PBP on);
+#                           sources: hdmi1 hdmi2 usbc (or dp1) dp (or dp2)
 #   monitor left <source>   same as input, left window with PBP on
-#   monitor layout <left> <right>   both windows (PBP on): hdmi1 hdmi2 dp1 dp2
+#   monitor layout <left> <right>   both windows (PBP on): hdmi1 hdmi2 dp usbc
 set -u
 
 # Which monitor to talk to: the EDID model name ddcutil shows in `ddcutil detect`.
@@ -26,6 +27,29 @@ getvcp_low() {
   ddc --brief getvcp "$1" 2>/dev/null | tail -1 | awk '{print $NF}' | sed 's/^x//'
 }
 
+# Fast read of E6 (PBP flag) for `status`, which the app polls often. It uses the
+# I2C bus remembered from the last slow lookup: 0.25 s instead of ~1.6 s for
+# the search by model name. Reads only: a stale bus number can at worst fail
+# (then the slow lookup runs and the bus is remembered again) and can never
+# change anything. Writes always find the monitor by model.
+BUS_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/monitor-ctl/bus"
+read_e6() {
+  if [ -r "$BUS_CACHE" ]; then
+    out=$(ddcutil --bus "$(cat "$BUS_CACHE")" --brief getvcp E6 2>/dev/null | tail -1)
+    case "$out" in
+      "VCP E6 CNC "*) echo "$out" | awk '{print $NF}' | sed 's/^x//'; return 0 ;;
+    esac
+  fi
+  v=$(getvcp_low E6)
+  [ -n "$v" ] || return 1
+  bus=$(ddcutil detect --brief 2>/dev/null | awk -v m="$MODEL" \
+    '/I2C bus:/ {b=$NF} /Monitor:/ && index($0, m) {sub(".*i2c-", "", b); print b; exit}')
+  if [ -n "$bus" ]; then
+    mkdir -p "$(dirname "$BUS_CACHE")" && echo "$bus" > "$BUS_CACHE"
+  fi
+  echo "$v"
+}
+
 pbp_is_on() { [ "$(getvcp_low E6)" = "00" ]; }
 
 # Wait up to ~15 s for PBP to reach the wanted state (E6: 00 = on, 01 = off).
@@ -39,18 +63,18 @@ wait_for_pbp() {
   return 1
 }
 
-# hdmi1|hdmi2|dp1|dp2 -> VCP 60 value, or empty if it isn't one of them
+# hdmi1|hdmi2|dp|usbc -> VCP 60 value, or empty if it isn't one of them
 input_value() {
   case "$1" in
-    hdmi1) echo 0x11 ;; hdmi2) echo 0x12 ;; dp1) echo 0x0f ;; dp2) echo 0x10 ;;
+    hdmi1) echo 0x11 ;; hdmi2) echo 0x12 ;; usbc | dp1) echo 0x0f ;; dp | dp2) echo 0x10 ;;
   esac
 }
 
 
 case "${1:-}" in
   status)
-    [ -n "$(getvcp_low E6)" ] || die "no answer from the monitor (is DDC/CI on, cable connected?)"
-    if pbp_is_on; then echo "PBP: on"; else echo "PBP: off"; fi
+    v=$(read_e6) || die "no answer from the monitor (is DDC/CI on, cable connected?)"
+    if [ "$v" = "00" ]; then echo "PBP: on"; else echo "PBP: off"; fi
     ;;
   pbp)
     case "${2:-}" in
@@ -75,7 +99,7 @@ case "${1:-}" in
     ;;
   input | left)
     v=$(input_value "${2:-}")
-    [ -n "$v" ] || die "usage: monitor $1 hdmi1|hdmi2|dp1|dp2"
+    [ -n "$v" ] || die "usage: monitor $1 hdmi1|hdmi2|dp|usbc"
     ddc setvcp 60 "$v" >/dev/null 2>&1 || die "could not set the input"
     ;;
   layout)
@@ -84,7 +108,7 @@ case "${1:-}" in
     # explicitly: put the right input on the left, swap the windows (the right
     # input is now on the right), then put the left input on the left.
     l=$(input_value "${2:-}"); r=$(input_value "${3:-}")
-    [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp1|dp2)"
+    [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp|usbc)"
     pbp_is_on || die "PBP is off, there are no two windows (monitor pbp on)"
     ddc setvcp 60 "$r" >/dev/null 2>&1 || die "could not set the right input"
     sleep 2
@@ -93,7 +117,7 @@ case "${1:-}" in
     ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input"
     ;;
   *)
-    sed -n '6,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

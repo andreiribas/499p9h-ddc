@@ -45,7 +45,7 @@ monitor left <source>           same as input
 monitor layout <left> <right>   set both windows (PBP on)
 ```
 
-Sources: `hdmi1`, `hdmi2`, `dp1`, `dp2`. A GNOME shortcut works well for
+Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector). The monitor itself reports them as DisplayPort-1 (`dp1`, which is the USB-C port) and DisplayPort-2 (`dp2`, the DisplayPort connector). A GNOME shortcut works well for
 `monitor swap`.
 
 ## App
