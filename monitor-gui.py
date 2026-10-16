@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 
 try:
     import gi
@@ -60,6 +61,10 @@ NAMES_VERSION = 2
 # another computer or the monitor's buttons show up (0 = never)
 DEFAULT_POLL_SECONDS = 5
 PBP_SUBTITLE = "Two inputs side by side"
+# After an Apply the monitor can keep answering this computer for a few seconds
+# before it switches away, so the "it answers, so it's on my input" inference below
+# waits this long.
+SETTLE_SECONDS = 20
 # The monitor only answers the computer whose input it is showing.
 NO_LINK_SUBTITLE = "Not answering: the monitor is probably showing another input"
 
@@ -169,6 +174,7 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.updating = False  # True while the UI is being set from code
         self.polling = False  # a background check is running
         self.poll_source = None  # id of the repeating background-check timer
+        self.last_apply = 0.0  # time.monotonic() of the last command that changed the monitor
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
@@ -216,8 +222,10 @@ class MonitorWindow(Adw.ApplicationWindow):
         note = Adw.PreferencesGroup()
         label = Gtk.Label(
             label="The monitor cannot report which inputs it shows. The pickers show what "
-            "you last applied here; if you change inputs with the monitor's buttons, "
-            "they may be out of date.",
+            "you last applied here; if you change inputs with the monitor's buttons or "
+            "from the other computer, they may be out of date. The monitor only answers the "
+            "computer it is showing, so when it answers here with PBP off, Source shows "
+            "this computer's input.",
             wrap=True,
             xalign=0,
             css_classes=["dim-label", "caption"],
@@ -312,6 +320,8 @@ class MonitorWindow(Adw.ApplicationWindow):
     def run_async(self, args, done):
         """Run `monitor <args>` off the UI thread, then call done(ok, text)."""
         self.set_busy(True)
+        if args[0] != "status":
+            self.last_apply = time.monotonic()
 
         def work():
             ok, text = run_monitor(*args)
@@ -319,6 +329,8 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         def finish(ok, text):
             self.set_busy(False)
+            if args[0] != "status":
+                self.last_apply = time.monotonic()  # settle time counts from the end
             done(ok, text)
             return False
 
@@ -336,6 +348,7 @@ class MonitorWindow(Adw.ApplicationWindow):
             elif ok and "PBP: off" in text:
                 self.set_pbp(False)
                 self.pbp_row.set_subtitle(PBP_SUBTITLE)
+                self.infer_source(False)
                 if announce:
                     self.toast("Read from the monitor: PBP is off")
             else:
@@ -343,6 +356,18 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.toast(text or "The monitor did not answer")
 
         self.run_async(["status"], done)
+
+    def infer_source(self, pbp_on):
+        """The monitor only answers the computer whose input it is showing. So if it
+        answers us and PBP is off, the screen is on this computer's own input: show
+        that in the Source picker, instead of whatever was last applied from here."""
+        if pbp_on or time.monotonic() - self.last_apply < SETTLE_SECONDS:
+            return
+        keys = [k for _, k in self.visible_sources()]
+        mine = self.state["connected_to"]
+        if mine in keys and self.key_of(self.single_row) != mine:
+            self.single_row.set_selected(keys.index(mine))
+            self.remember()
 
     def arm_poll(self):
         """(Re)start the background-check timer with the current interval."""
@@ -457,6 +482,7 @@ class MonitorWindow(Adw.ApplicationWindow):
             elif ok and "PBP: off" in text:
                 self.set_pbp(False)
                 self.pbp_row.set_subtitle(PBP_SUBTITLE)
+                self.infer_source(False)
             else:
                 self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
             return False
