@@ -55,6 +55,11 @@ ddc_set() {
 
 die() { echo "monitor: $*" >&2; exit 1; }
 
+# MONITOR_TRACE=1 prints the time of each step to stderr (to see where a command
+# spends its time).
+T0=$(date +%s.%N)
+trace() { [ -z "${MONITOR_TRACE:-}" ] || printf '%6.2fs  %s\n' "$(echo "$(date +%s.%N) - $T0" | bc)" "$*" >&2; }
+
 # Shown when a command fails because the monitor does not answer. A computer can
 # only control the monitor while its own input is the one showing: on any other
 # input the monitor stops answering that computer's cable altogether.
@@ -113,9 +118,12 @@ pbp_is_on() {
   [ -n "$v" ] && [ "$v" != 0 ]
 }
 
-# Wait for PBP to reach the wanted state ("on" or "off"), checking every half
-# second, for up to $2 seconds (default 10).
+# Wait for PBP to reach the wanted state ("on" or "off"), for up to $2 seconds
+# (default 10). The monitor needs a few seconds to re-sync after the change and
+# asking it constantly during that time seems to slow it down, so leave it alone
+# for the first second, then check every 0.5 s.
 wait_for_pbp() {
+  sleep "${MONITOR_PBP_QUIET:-1}"
   i=0
   max=$(( ${2:-10} * 2 ))
   while [ $i -lt $max ]; do
@@ -140,20 +148,31 @@ input_value() {
 }
 
 
-# set_layout LEFT RIGHT (names). Only the left window has an input code (60), and
+# Pause between the steps of a layout change: the monitor must have taken the
+# previous step before the next one. MONITOR_LAYOUT_PAUSE overrides it.
+LAYOUT_PAUSE="${MONITOR_LAYOUT_PAUSE:-0.5}"
+
+# set_layout LEFT RIGHT [nocheck] (names). Only the left window has an input code (60), and
 # reading it back is NOT reliable (it has reported the wrong input). So set both
 # windows explicitly: put the right input on the left, swap the windows (the
 # right input is now on the right), then put the left input on the left.
 set_layout() {
   l=$(input_value "$1"); r=$(input_value "$2")
   [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|usbc|dp)"
-  v=$(read_pbp) || die "$NO_LINK"
-  [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
+  trace "layout: start"
+  if [ "${3:-}" != nocheck ]; then
+    v=$(read_pbp) || die "$NO_LINK"
+    [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
+    trace "layout: PBP state read"
+  fi
   ddc_set 60 "$r" || die "could not set the right input: $NO_LINK"
-  sleep 1
+  trace "layout: right input put on the left"
+  sleep "$LAYOUT_PAUSE"
   ddc_set F6 1 --noverify || die "swap failed: $NO_LINK"
-  sleep 1
+  trace "layout: swapped"
+  sleep "$LAYOUT_PAUSE"
   ddc_set 60 "$l" || die "could not set the left input: $NO_LINK"
+  trace "layout: left input set"
 }
 
 case "${1:-}" in
@@ -173,14 +192,17 @@ case "${1:-}" in
     n=0
     done_=""
     while [ $n -lt 3 ]; do
+      trace "pbp $2: write A5 = $value"
       ddc_set A5 "$value" --noverify
+      trace "pbp $2: written, waiting for the monitor"
       if wait_for_pbp "$want" 5; then done_=1; break; fi
       n=$((n + 1))
     done
     [ -n "$done_" ] || die "PBP did not turn $2 (the monitor ignored the command)"
+    trace "pbp $2: monitor confirmed"
     # Turning PBP on only splits the screen: the right half shows whatever input
     # the monitor remembers. With <left> <right> given, set both windows now.
-    if [ "$want" = on ] && [ -n "${3:-}" ]; then set_layout "$3" "${4:-}"; fi
+    if [ "$want" = on ] && [ -n "${3:-}" ]; then set_layout "$3" "${4:-}" nocheck; fi
     ;;
   doctor)
     # Everything needed to tell an app problem from a connection problem. Read-only.
