@@ -66,3 +66,11 @@ on the DisplayPort cable.) The app and `monitor` call them "USB-C"/`usbc` and
 
 `monitor status` reads E6 on the I2C bus remembered in ~/.cache/monitor-ctl/bus
 (0.25 s instead of ~1.6 s); the app polls it every 5 s by default (Options menu).
+
+## PIP / split ratio
+
+This monitor's menu has no PIP option, only PBP (checked in the OSD). PBP is a fixed
+50/50 split (two 2560x1440 halves), so there is nothing to adjust. `A5` accepts 0
+(single screen) and 512 (turns PBP on); writing 256 is rejected here. The
+scan.sh / diffscan.sh scripts were sped up for this search (about 30 s per scan
+using the remembered I2C bus) and record A5's full raw value.
