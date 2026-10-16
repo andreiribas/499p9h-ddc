@@ -102,3 +102,16 @@ skips the probing if this ddcutil has --skip-ddc-checks (2.x; 1.4.1 may not), re
 once after 0.3 s, and only then falls back to the slow lookup. In 10 spaced-out writes:
 7 took 0.1-0.2 s and 3 took about 1.5 s (retry path). The monitor's own switching time
 (re-sync of the new input) comes on top and can't be changed.
+
+## The right window is set in the monitor's menu
+
+`layout` (60 = right input, F6 swap, 60 = left input) did not put USB-C on the right on
+this monitor, even with 1.5 s pauses: the monitor needs several seconds to settle after
+each step and ignores the swap. The monitor's own menu has a setting for the right
+window's input, and the monitor **remembers it across PBP off/on** (checked: set to USB-C
+in the menu, `monitor pbp off`, `monitor pbp on`, and the other laptop was back on the
+right). So `monitor pbp on [left]` only turns PBP on and sets the left window, and the
+app's Apply in PBP mode sets only the left. The app's Right picker just records what the
+menu is set to, so Swap can keep the pickers in step. `layout` stays as an experimental
+command.
+

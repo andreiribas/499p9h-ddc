@@ -212,6 +212,11 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.dual_group = Adw.PreferencesGroup(title="Windows")
         self.left_row = self.source_row("Left window", "left")
         self.right_row = self.source_row("Right window", "right")
+        # The monitor has no reliable code for the right window's input: it is set in
+        # the monitor's own menu and remembered there. This picker only records what
+        # it is set to, so Swap and the display can keep track.
+        self.right_row.set_subtitle("Set in the monitor's menu; pick what it is set to, for Swap")
+        self.right_row.connect("notify::selected", lambda _r, _p: self.remember())
         self.dual_group.add(self.left_row)
         self.dual_group.add(self.right_row)
         self.dual_group.add(
@@ -503,9 +508,9 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.set_pbp(not on)  # put the switch back
                 self.toast(text or "The monitor did not respond")
 
-        # Turning PBP on only splits the screen; the right half would show whatever
-        # input the monitor remembers. So pass the chosen left and right inputs.
-        args = ["pbp", "on", self.key_of(self.left_row), self.key_of(self.right_row)] if on else ["pbp", "off"]
+        # Turning PBP on splits the screen; the right half shows the input set in the
+        # monitor's menu (the monitor remembers it). Only the left input is sent.
+        args = ["pbp", "on", self.key_of(self.left_row)] if on else ["pbp", "off"]
         self.run_async(args, done)
 
     def on_apply_single(self):
@@ -519,14 +524,14 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.run_async(["input", key], done)
 
     def on_apply_dual(self):
-        left, right = self.key_of(self.left_row), self.key_of(self.right_row)
+        left = self.key_of(self.left_row)
 
         def done(ok, text):
             if ok:
                 self.remember()
-            self.toast(f"Left {left}, right {right}" if ok else (text or "Failed"))
+            self.toast(f"Left window: {left}" if ok else (text or "Failed"))
 
-        self.run_async(["layout", left, right], done)
+        self.run_async(["input", left], done)
 
     def on_swap(self):
         def done(ok, text):

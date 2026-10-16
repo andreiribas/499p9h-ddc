@@ -7,12 +7,14 @@
 #   monitor status          PBP on/off
 #   monitor doctor          print diagnostics (read-only), to paste into a bug report
 #   monitor pbp on|off      turn PBP on / off
-#   monitor pbp on <left> <right>   turn PBP on and set both windows
+#   monitor pbp on <left>   turn PBP on and set the left window
 #   monitor swap            swap the left and right windows (PBP only)
 #   monitor input <source>  input of the screen (PBP off) / left window (PBP on);
 #                           sources: hdmi1 hdmi2 usbc (or dp1) dp (or dp2)
 #   monitor left <source>   same as input, left window with PBP on
-#   monitor layout <left> <right>   both windows (PBP on): hdmi1 hdmi2 dp usbc
+#   monitor layout <left> <right>   EXPERIMENTAL, unreliable: both windows (PBP on).
+#                           The right window is better set once in the monitor's
+#                           menu: the monitor remembers it.
 set -u
 
 # Which monitor to talk to: the EDID model name ddcutil shows in `ddcutil detect`.
@@ -150,7 +152,7 @@ input_value() {
 
 # Pause between the steps of a layout change: the monitor must have taken the
 # previous step before the next one. MONITOR_LAYOUT_PAUSE overrides it.
-LAYOUT_PAUSE="${MONITOR_LAYOUT_PAUSE:-0.5}"
+LAYOUT_PAUSE="${MONITOR_LAYOUT_PAUSE:-1}"
 
 # set_layout LEFT RIGHT [nocheck] (names). Only the left window has an input code (60), and
 # reading it back is NOT reliable (it has reported the wrong input). So set both
@@ -184,8 +186,12 @@ case "${1:-}" in
     case "${2:-}" in
       on)  want=on; value=512 ;;
       off) want=off; value=0 ;;
-      *) die "usage: monitor pbp on|off  |  monitor pbp on <left> <right>" ;;
+      *) die "usage: monitor pbp on|off  |  monitor pbp on <left>" ;;
     esac
+    left_val=""
+    if [ "$want" = on ] && [ -n "${3:-}" ]; then   # check the argument before touching the monitor
+      left_val=$(input_value "$3"); [ -n "$left_val" ] || die "usage: monitor pbp on <left>  (hdmi1|hdmi2|usbc|dp)"
+    fi
     # A5 is the window mode: 0 = single screen, 512 = PBP (it reads back as 256
     # while PBP is on). The monitor sometimes ignores a write that comes right
     # after another change, so if the state hasn't changed after 5 s, write again.
@@ -200,9 +206,13 @@ case "${1:-}" in
     done
     [ -n "$done_" ] || die "PBP did not turn $2 (the monitor ignored the command)"
     trace "pbp $2: monitor confirmed"
-    # Turning PBP on only splits the screen: the right half shows whatever input
-    # the monitor remembers. With <left> <right> given, set both windows now.
-    if [ "$want" = on ] && [ -n "${3:-}" ]; then set_layout "$3" "${4:-}" nocheck; fi
+    # Turning PBP on only splits the screen. The right half shows the input set in
+    # the monitor's own menu, which the monitor remembers (checked: it comes back
+    # after PBP off and on). With <left> given, also set the left window.
+    if [ -n "$left_val" ]; then
+      ddc_set 60 "$left_val" || die "could not set the left input: $NO_LINK"
+      trace "pbp on: left window set"
+    fi
     ;;
   doctor)
     # Everything needed to tell an app problem from a connection problem. Read-only.
@@ -243,7 +253,7 @@ case "${1:-}" in
     set_layout "${2:-}" "${3:-}"
     ;;
   *)
-    sed -n '7,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,17p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

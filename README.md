@@ -39,10 +39,11 @@ different model name, set `MONITOR_MODEL='<name>'`.
 ```
 monitor status                  PBP on/off
 monitor pbp on|off              turn PBP on / off
+monitor pbp on <left>           turn PBP on and set the left window
 monitor swap                    swap the left and right windows (PBP only)
 monitor input <source>          input of the screen (PBP off) / left window (PBP on)
 monitor left <source>           same as input
-monitor layout <left> <right>   set both windows (PBP on)
+monitor layout <left> <right>   EXPERIMENTAL, unreliable: set both windows (PBP on)
 ```
 
 Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as in the monitor's own menu. Over DDC the monitor numbers them differently: its USB-C port is "DisplayPort-1" (`dp1`), the DisplayPort connector is "DisplayPort-2" (`dp2`), and menu "HDMI 1" / "HDMI 2" are DDC values 0x12 / 0x11 (checked on one monitor by plugging a laptop in and switching to each value). A GNOME shortcut works well for
@@ -61,7 +62,7 @@ or a left and a right picker, Swap and Apply.
 | Input of the left window (VCP `60`) | works |
 | PBP off (`A5` = 0) / on (`A5` = 512) | works |
 | Swap left and right (`F6` = 1) | works, PBP only |
-| Right window input | no code; `layout` sets it by putting it on the left, swapping, then setting the left |
+| Right window input | **no reliable code.** Set it once in the monitor's own menu: the monitor remembers it, also across PBP off/on. `layout` tries it by putting the input on the left, swapping, then setting the left, but the monitor needs several seconds between those steps and often ignores the swap |
 | KVM (USB upstream) switch | **no code found**, still needs the monitor's buttons |
 | Reading which input a window shows | **unreliable**: code `60` has reported the wrong input |
 
