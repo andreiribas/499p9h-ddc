@@ -7,6 +7,7 @@
 #   monitor status          PBP on/off
 #   monitor doctor          print diagnostics (read-only), to paste into a bug report
 #   monitor pbp on|off      turn PBP on / off
+#   monitor pbp on <left> <right>   turn PBP on and set both windows
 #   monitor swap            swap the left and right windows (PBP only)
 #   monitor input <source>  input of the screen (PBP off) / left window (PBP on);
 #                           sources: hdmi1 hdmi2 usbc (or dp1) dp (or dp2)
@@ -95,19 +96,33 @@ read_pbp() {
   echo "$v"
 }
 
+# Current A5 value, as fast as possible: the bus from sysfs (or the remembered one)
+# with ddcutil's probing skipped, else the slow lookup by model.
+a5_now() {
+  bus=$(find_bus) || bus=$(cat "$BUS_CACHE" 2>/dev/null) || bus=""
+  if [ -n "$bus" ]; then
+    # shellcheck disable=SC2086
+    v=$(ddcutil --bus "$bus" $FAST_OPTS getvcp A5 --verbose 2>/dev/null | a5_value)
+    if [ -n "$v" ]; then echo "$v"; return 0; fi
+  fi
+  ddc getvcp A5 --verbose 2>/dev/null | a5_value
+}
+
 pbp_is_on() {
-  v=$(ddc getvcp A5 --verbose 2>/dev/null | a5_value)
+  v=$(a5_now)
   [ -n "$v" ] && [ "$v" != 0 ]
 }
 
-# Wait up to ~15 s for PBP to reach the wanted state ("on" or "off").
+# Wait for PBP to reach the wanted state ("on" or "off"), checking every half
+# second, for up to $2 seconds (default 10).
 wait_for_pbp() {
   i=0
-  while [ $i -lt 8 ]; do
-    v=$(ddc getvcp A5 --verbose 2>/dev/null | a5_value)
+  max=$(( ${2:-10} * 2 ))
+  while [ $i -lt $max ]; do
+    v=$(a5_now)
     if [ "$1" = on ] && [ -n "$v" ] && [ "$v" != 0 ]; then return 0; fi
     if [ "$1" = off ] && [ "$v" = 0 ]; then return 0; fi
-    sleep 2
+    sleep 0.5
     i=$((i + 1))
   done
   return 1
@@ -125,6 +140,22 @@ input_value() {
 }
 
 
+# set_layout LEFT RIGHT (names). Only the left window has an input code (60), and
+# reading it back is NOT reliable (it has reported the wrong input). So set both
+# windows explicitly: put the right input on the left, swap the windows (the
+# right input is now on the right), then put the left input on the left.
+set_layout() {
+  l=$(input_value "$1"); r=$(input_value "$2")
+  [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|usbc|dp)"
+  v=$(read_pbp) || die "$NO_LINK"
+  [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
+  ddc_set 60 "$r" || die "could not set the right input: $NO_LINK"
+  sleep 1
+  ddc_set F6 1 --noverify || die "swap failed: $NO_LINK"
+  sleep 1
+  ddc_set 60 "$l" || die "could not set the left input: $NO_LINK"
+}
+
 case "${1:-}" in
   status)
     v=$(read_pbp) || die "$NO_LINK (also check that DDC/CI is on in the monitor menu)"
@@ -134,18 +165,22 @@ case "${1:-}" in
     case "${2:-}" in
       on)  want=on; value=512 ;;
       off) want=off; value=0 ;;
-      *) die "usage: monitor pbp on|off" ;;
+      *) die "usage: monitor pbp on|off  |  monitor pbp on <left> <right>" ;;
     esac
-    # A5 is the window mode: 0 = single screen, 512 = PBP (it reads back as
-    # 256 while PBP is on). A write to A5 is only accepted some of the time
-    # right after a mode change, so try a few times.
+    # A5 is the window mode: 0 = single screen, 512 = PBP (it reads back as 256
+    # while PBP is on). The monitor sometimes ignores a write that comes right
+    # after another change, so if the state hasn't changed after 5 s, write again.
     n=0
+    done_=""
     while [ $n -lt 3 ]; do
       ddc_set A5 "$value" --noverify
-      wait_for_pbp "$want" && exit 0
+      if wait_for_pbp "$want" 5; then done_=1; break; fi
       n=$((n + 1))
     done
-    die "PBP did not turn $2 (the monitor ignored the command)"
+    [ -n "$done_" ] || die "PBP did not turn $2 (the monitor ignored the command)"
+    # Turning PBP on only splits the screen: the right half shows whatever input
+    # the monitor remembers. With <left> <right> given, set both windows now.
+    if [ "$want" = on ] && [ -n "${3:-}" ]; then set_layout "$3" "${4:-}"; fi
     ;;
   doctor)
     # Everything needed to tell an app problem from a connection problem. Read-only.
@@ -155,6 +190,7 @@ case "${1:-}" in
     echo "ddcutil:   $(ddcutil --version 2>&1 | head -1)"
     echo "session:   ${XDG_SESSION_TYPE:-?}, $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-?}")"
     echo "bus cache: $(cat "$BUS_CACHE" 2>/dev/null || echo none)"
+    echo "fast path: bus from sysfs = $(find_bus || echo 'not found (monitor not on a connected port of this computer)'); ddcutil probing skipped = ${FAST_OPTS:-no (this ddcutil has no --skip-ddc-checks)}"
     gui="$(dirname "$(readlink -f "$0")")/monitor-gui.py"
     if [ -r "$gui" ]; then
       echo "app:       $gui ($(grep -c poll_seconds "$gui") poll_seconds refs: 0 = old version)"
@@ -182,22 +218,10 @@ case "${1:-}" in
     ddc_set 60 "$v" || die "could not set the input: $NO_LINK"
     ;;
   layout)
-    # Only the left window has an input code (60), and reading it back is NOT
-    # reliable (it has reported the wrong input). So set both windows
-    # explicitly: put the right input on the left, swap the windows (the right
-    # input is now on the right), then put the left input on the left.
-    l=$(input_value "${2:-}"); r=$(input_value "${3:-}")
-    [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp|usbc)"
-    v=$(read_pbp) || die "$NO_LINK"
-    [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
-    ddc_set 60 "$r" || die "could not set the right input: $NO_LINK"
-    sleep 2
-    ddc_set F6 1 --noverify || die "swap failed: $NO_LINK"
-    sleep 2
-    ddc_set 60 "$l" || die "could not set the left input: $NO_LINK"
+    set_layout "${2:-}" "${3:-}"
     ;;
   *)
-    sed -n '7,14p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,15p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

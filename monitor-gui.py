@@ -477,7 +477,10 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.set_pbp(not on)  # put the switch back
                 self.toast(text or "The monitor did not respond")
 
-        self.run_async(["pbp", "on" if on else "off"], done)
+        # Turning PBP on only splits the screen; the right half would show whatever
+        # input the monitor remembers. So pass the chosen left and right inputs.
+        args = ["pbp", "on", self.key_of(self.left_row), self.key_of(self.right_row)] if on else ["pbp", "off"]
+        self.run_async(args, done)
 
     def on_apply_single(self):
         key = self.key_of(self.single_row)
