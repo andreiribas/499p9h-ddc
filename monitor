@@ -20,6 +20,38 @@ MODEL="${MONITOR_MODEL:-PHL 499P9}"
 command -v ddcutil >/dev/null 2>&1 || { echo "monitor: ddcutil is not installed" >&2; exit 1; }
 ddc() { ddcutil --model "$MODEL" "$@"; }
 
+# Writes are fast (about 0.1 s instead of 3+ s): by default ddcutil first scans
+# every display and probes the monitor, and the monitor is slow to answer those
+# probes. So find the monitor's I2C bus from the kernel's list of connected
+# displays (milliseconds; it must be a connected display whose EDID names this
+# model, so a write can never go to another screen) and skip ddcutil's probing
+# when this ddcutil supports that. Anything else falls back to the slow lookup.
+FAST_OPTS=""
+if ddcutil --help 2>&1 | grep -q -- "--skip-ddc-checks"; then FAST_OPTS="--skip-ddc-checks"; fi
+
+find_bus() {
+  for c in /sys/class/drm/card*-*; do
+    [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+    grep -aq "$MODEL" "$c/edid" 2>/dev/null || continue
+    b=$(basename "$(readlink -f "$c/ddc" 2>/dev/null)")
+    case "$b" in i2c-*) echo "${b#i2c-}"; return 0 ;; esac
+  done
+  return 1
+}
+
+# ddc_set CODE VALUE [--noverify]
+ddc_set() {
+  if bus=$(find_bus); then
+    # shellcheck disable=SC2086
+    ddcutil --bus "$bus" $FAST_OPTS ${3:-} setvcp "$1" "$2" >/dev/null 2>&1 && return 0
+    # the monitor can be busy for a moment right after a write: try once more
+    # quickly before falling back to the slow lookup (3+ s)
+    sleep 0.3
+    ddcutil --bus "$bus" $FAST_OPTS ${3:-} setvcp "$1" "$2" >/dev/null 2>&1 && return 0
+  fi
+  ddc ${3:-} setvcp "$1" "$2" >/dev/null 2>&1
+}
+
 die() { echo "monitor: $*" >&2; exit 1; }
 
 # Shown when a command fails because the monitor does not answer. A computer can
@@ -109,7 +141,7 @@ case "${1:-}" in
     # right after a mode change, so try a few times.
     n=0
     while [ $n -lt 3 ]; do
-      ddc --noverify setvcp A5 "$value" >/dev/null 2>&1
+      ddc_set A5 "$value" --noverify
       wait_for_pbp "$want" && exit 0
       n=$((n + 1))
     done
@@ -142,12 +174,12 @@ case "${1:-}" in
   swap)
     v=$(read_pbp) || die "$NO_LINK"
     [ "$v" != 0 ] || die "PBP is off, nothing to swap (turn PBP on in the monitor menu)"
-    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed: $NO_LINK"
+    ddc_set F6 1 --noverify || die "swap failed: $NO_LINK"
     ;;
   input | left)
     v=$(input_value "${2:-}")
     [ -n "$v" ] || die "usage: monitor $1 hdmi1|hdmi2|dp|usbc"
-    ddc setvcp 60 "$v" >/dev/null 2>&1 || die "could not set the input: $NO_LINK"
+    ddc_set 60 "$v" || die "could not set the input: $NO_LINK"
     ;;
   layout)
     # Only the left window has an input code (60), and reading it back is NOT
@@ -158,11 +190,11 @@ case "${1:-}" in
     [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp|usbc)"
     v=$(read_pbp) || die "$NO_LINK"
     [ "$v" != 0 ] || die "PBP is off, there are no two windows (monitor pbp on)"
-    ddc setvcp 60 "$r" >/dev/null 2>&1 || die "could not set the right input: $NO_LINK"
+    ddc_set 60 "$r" || die "could not set the right input: $NO_LINK"
     sleep 2
-    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed: $NO_LINK"
+    ddc_set F6 1 --noverify || die "swap failed: $NO_LINK"
     sleep 2
-    ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input: $NO_LINK"
+    ddc_set 60 "$l" || die "could not set the left input: $NO_LINK"
     ;;
   *)
     sed -n '7,14p' "$0" | sed 's/^# \{0,1\}//'

@@ -91,3 +91,14 @@ A laptop on the port the monitor's menu calls "HDMI 2" appears when VCP 60 is se
 settings carry a `names_version`; files without it are swapped once on load so each choice
 keeps pointing at the same physical input.
 
+
+## Switching speed
+
+`ddcutil --model ... setvcp 60 ...` took 3-7 s: it scans every display and probes the
+monitor first, and the monitor is slow to answer the probes. `ddcutil --bus N
+--skip-ddc-checks setvcp 60 ...` takes 0.1 s. `monitor` now finds the bus from sysfs (a
+connected display whose EDID names the model, so a write can't reach another screen),
+skips the probing if this ddcutil has --skip-ddc-checks (2.x; 1.4.1 may not), retries
+once after 0.3 s, and only then falls back to the slow lookup. In 10 spaced-out writes:
+7 took 0.1-0.2 s and 3 took about 1.5 s (retry path). The monitor's own switching time
+(re-sync of the new input) comes on top and can't be changed.
