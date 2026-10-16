@@ -5,6 +5,7 @@
 # has no known code, so it is not offered.
 #
 #   monitor status          PBP on/off
+#   monitor doctor          print diagnostics (read-only), to paste into a bug report
 #   monitor pbp on|off      turn PBP on / off
 #   monitor swap            swap the left and right windows (PBP only)
 #   monitor input <source>  input of the screen (PBP off) / left window (PBP on);
@@ -93,6 +94,30 @@ case "${1:-}" in
     done
     die "PBP did not turn $2 (the monitor ignored the command)"
     ;;
+  doctor)
+    # Everything needed to tell an app problem from a connection problem. Read-only.
+    echo "== monitor doctor"
+    echo "script:    $(readlink -f "$0")"
+    echo "model:     $MODEL"
+    echo "ddcutil:   $(ddcutil --version 2>&1 | head -1)"
+    echo "session:   ${XDG_SESSION_TYPE:-?}, $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-?}")"
+    echo "bus cache: $(cat "$BUS_CACHE" 2>/dev/null || echo none)"
+    gui="$(dirname "$(readlink -f "$0")")/monitor-gui.py"
+    if [ -r "$gui" ]; then
+      echo "app:       $gui ($(grep -c poll_seconds "$gui") poll_seconds refs: 0 = old version)"
+    else
+      echo "app:       not found next to the script"
+    fi
+    echo "-- ddcutil detect"
+    ddcutil detect --brief 2>&1 | grep -E "I2C bus|Monitor|Invalid|Display [0-9]|No displays" | head -12 \
+      | sed -E 's/^( *Monitor: +[^:]*:[^:]*):.*/\1:<serial hidden>/'
+    echo "-- E6 (PBP flag; 00 = on, 01 = off), looked up by model"
+    ddc --brief getvcp E6 2>&1 | tail -2
+    echo "-- A5 (window mode), looked up by model"
+    ddc getvcp A5 --verbose 2>&1 | grep -E "Raw value|error|Error" | head -2 | sed 's/.*Raw value: //'
+    echo "-- monitor status"
+    "$0" status 2>&1
+    ;;
   swap)
     pbp_is_on || die "PBP is off, nothing to swap (turn PBP on in the monitor menu)"
     ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed"
@@ -117,7 +142,7 @@ case "${1:-}" in
     ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input"
     ;;
   *)
-    sed -n '7,13p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,14p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac
