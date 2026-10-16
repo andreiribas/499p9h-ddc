@@ -10,9 +10,22 @@ so the source pickers show what was last applied from here, remembered in
 import json
 import os
 import subprocess
+import sys
 import threading
 
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    # Started with a Python that lacks PyGObject (e.g. Homebrew's python3):
+    # the GNOME libraries live in the system Python, so run under that one.
+    if os.path.realpath(sys.executable) != os.path.realpath("/usr/bin/python3") and os.path.exists(
+        "/usr/bin/python3"
+    ):
+        os.execv("/usr/bin/python3", ["/usr/bin/python3", *sys.argv])
+    sys.exit(
+        "monitor-gui: PyGObject (GTK 4 + libadwaita) is not installed. "
+        "Debian/Ubuntu: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
+    )
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
