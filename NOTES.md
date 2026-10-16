@@ -44,9 +44,9 @@ setvcp 60 0x11`).
 
 - **PBP on = `setvcp --noverify A5 512`** (it then reads back 256); off = `A5 0`.
   The earlier "can't turn PBP on" was wrong: 256 is rejected, 512 works. The
-  `monitor pbp on|off` command waits for E6 to confirm.
+  `monitor pbp on|off` command waits for A5 to confirm.
 - **Reading code 60 is NOT reliable** (it reported dp2 while this laptop,
-  hdmi1, was on the left). So `monitor status` only reports PBP (E6, reliable)
+  hdmi1, was on the left). So `monitor status` only reports PBP (A5, reliable)
   and `layout` never reads 60; it sets both windows explicitly:
   `60 <right>`, `F6 1` (swap), `60 <left>`.
 - `monitor input|left <src>`, `monitor layout <left> <right>`, `monitor swap`.
@@ -64,7 +64,7 @@ earlier note said the opposite: it was based on a test made while that laptop wa
 on the DisplayPort cable.) The app and `monitor` call them "USB-C"/`usbc` and
 "DisplayPort"/`dp`; `dp1` = `usbc` and `dp2` = `dp` still work.
 
-`monitor status` reads E6 on the I2C bus remembered in ~/.cache/monitor-ctl/bus
+`monitor status` reads A5 on the I2C bus remembered in ~/.cache/monitor-ctl/bus
 (0.25 s instead of ~1.6 s); the app polls it every 5 s by default (Options menu).
 
 ## PIP / split ratio
@@ -74,3 +74,11 @@ This monitor's menu has no PIP option, only PBP (checked in the OSD). PBP is a f
 (single screen) and 512 (turns PBP on); writing 256 is rejected here. The
 scan.sh / diffscan.sh scripts were sped up for this search (about 30 s per scan
 using the remembered I2C bus) and record A5's full raw value.
+
+## E6 is not a reliable PBP flag; A5 is
+
+`E6` (1 = off, 0 = on) was used for `monitor status`, but on a second laptop connected by
+USB-C it read 0 ("on") while the monitor showed one picture, and `A5` read 0 there.
+`A5` (window mode, read with `getvcp A5 --verbose`, field `cur_val`): 0 = one screen,
+256 = PBP. It agreed with reality from both laptops, so `status`, `pbp on|off`,
+`swap` and `layout` now use A5. `monitor doctor` prints both for comparison.

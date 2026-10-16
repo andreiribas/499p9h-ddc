@@ -28,20 +28,27 @@ getvcp_low() {
   ddc --brief getvcp "$1" 2>/dev/null | tail -1 | awk '{print $NF}' | sed 's/^x//'
 }
 
-# Fast read of E6 (PBP flag) for `status`, which the app polls often. It uses the
-# I2C bus remembered from the last slow lookup: 0.25 s instead of ~1.6 s for
-# the search by model name. Reads only: a stale bus number can at worst fail
-# (then the slow lookup runs and the bus is remembered again) and can never
-# change anything. Writes always find the monitor by model.
+# PBP state comes from A5 (window mode): 0 = one full screen, anything else =
+# PBP (it reads 256 while PBP is on). E6 was used before, but it answered
+# differently depending on which laptop asked and over which cable (it said "on"
+# on a laptop connected by USB-C while the screen was a single picture), so it
+# is not used any more.
+a5_value() { # reads `getvcp A5 --verbose` on stdin, prints the current value as a number
+  sed -n 's/.*cur_val= *\([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+# Fast read of A5 for `status`, which the app polls often. It uses the I2C bus
+# remembered from the last slow lookup: about 0.25 s instead of ~1.6 s for the
+# search by model name. Reads only: a stale bus number can at worst fail (then
+# the slow lookup runs and the bus is remembered again) and can never change
+# anything. Writes always find the monitor by model.
 BUS_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/monitor-ctl/bus"
-read_e6() {
+read_pbp() {
   if [ -r "$BUS_CACHE" ]; then
-    out=$(ddcutil --bus "$(cat "$BUS_CACHE")" --brief getvcp E6 2>/dev/null | tail -1)
-    case "$out" in
-      "VCP E6 CNC "*) echo "$out" | awk '{print $NF}' | sed 's/^x//'; return 0 ;;
-    esac
+    v=$(ddcutil --bus "$(cat "$BUS_CACHE")" getvcp A5 --verbose 2>/dev/null | a5_value)
+    if [ -n "$v" ]; then echo "$v"; return 0; fi
   fi
-  v=$(getvcp_low E6)
+  v=$(ddc getvcp A5 --verbose 2>/dev/null | a5_value)
   [ -n "$v" ] || return 1
   bus=$(ddcutil detect --brief 2>/dev/null | awk -v m="$MODEL" \
     '/I2C bus:/ {b=$NF} /Monitor:/ && index($0, m) {sub(".*i2c-", "", b); print b; exit}')
@@ -51,13 +58,18 @@ read_e6() {
   echo "$v"
 }
 
-pbp_is_on() { [ "$(getvcp_low E6)" = "00" ]; }
+pbp_is_on() {
+  v=$(ddc getvcp A5 --verbose 2>/dev/null | a5_value)
+  [ -n "$v" ] && [ "$v" != 0 ]
+}
 
-# Wait up to ~15 s for PBP to reach the wanted state (E6: 00 = on, 01 = off).
+# Wait up to ~15 s for PBP to reach the wanted state ("on" or "off").
 wait_for_pbp() {
   i=0
   while [ $i -lt 8 ]; do
-    [ "$(getvcp_low E6)" = "$1" ] && return 0
+    v=$(ddc getvcp A5 --verbose 2>/dev/null | a5_value)
+    if [ "$1" = on ] && [ -n "$v" ] && [ "$v" != 0 ]; then return 0; fi
+    if [ "$1" = off ] && [ "$v" = 0 ]; then return 0; fi
     sleep 2
     i=$((i + 1))
   done
@@ -74,13 +86,13 @@ input_value() {
 
 case "${1:-}" in
   status)
-    v=$(read_e6) || die "no answer from the monitor (is DDC/CI on, cable connected?)"
-    if [ "$v" = "00" ]; then echo "PBP: on"; else echo "PBP: off"; fi
+    v=$(read_pbp) || die "no answer from the monitor (is DDC/CI on, cable connected?)"
+    if [ "$v" != 0 ]; then echo "PBP: on"; else echo "PBP: off"; fi
     ;;
   pbp)
     case "${2:-}" in
-      on)  want=00; value=512 ;;
-      off) want=01; value=0 ;;
+      on)  want=on; value=512 ;;
+      off) want=off; value=0 ;;
       *) die "usage: monitor pbp on|off" ;;
     esac
     # A5 is the window mode: 0 = single screen, 512 = PBP (it reads back as
@@ -111,9 +123,9 @@ case "${1:-}" in
     echo "-- ddcutil detect"
     ddcutil detect --brief 2>&1 | grep -E "I2C bus|Monitor|Invalid|Display [0-9]|No displays" | head -12 \
       | sed -E 's/^( *Monitor: +[^:]*:[^:]*):.*/\1:<serial hidden>/'
-    echo "-- E6 (PBP flag; 00 = on, 01 = off), looked up by model"
+    echo "-- E6 (no longer used: it differs between laptops/cables), looked up by model"
     ddc --brief getvcp E6 2>&1 | tail -2
-    echo "-- A5 (window mode), looked up by model"
+    echo "-- A5 (window mode: 0 = one screen, 256 = PBP), looked up by model"
     ddc getvcp A5 --verbose 2>&1 | grep -E "Raw value|error|Error" | head -2 | sed 's/.*Raw value: //'
     echo "-- monitor status"
     "$0" status 2>&1

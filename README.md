@@ -67,7 +67,7 @@ or a left and a right picker, Swap and Apply.
 
 Because the inputs can't be read back, the app shows what you last applied
 (`~/.config/monitor-ctl/state.json`), and `monitor status` only reports PBP
-(VCP `E6`: 0 = on, 1 = off), which is reliable. If you change inputs with the
+(VCP `A5`: 0 = one screen, 256 = PBP), which is reliable. If you change inputs with the
 buttons, the app can be out of date.
 
 `A5` is the Philips window-mode code. `256` is what it reads back while PBP is
