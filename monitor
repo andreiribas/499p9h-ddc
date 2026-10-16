@@ -1,0 +1,99 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Control the Philips 499P9H over DDC/CI (ddcutil). See NOTES.md for how the
+# codes were found. Only what works on this monitor is here; the KVM switch
+# has no known code, so it is not offered.
+#
+#   monitor status          PBP on/off
+#   monitor pbp on|off      turn PBP on / off
+#   monitor swap            swap the left and right windows (PBP only)
+#   monitor input <source>  input of the screen (PBP off) / left window (PBP on)
+#   monitor left <source>   same as input, left window with PBP on
+#   monitor layout <left> <right>   both windows (PBP on): hdmi1 hdmi2 dp1 dp2
+set -u
+
+# Which monitor to talk to: the EDID model name ddcutil shows in `ddcutil detect`.
+# Override with MONITOR_MODEL=... if yours is reported differently.
+MODEL="${MONITOR_MODEL:-PHL 499P9}"
+command -v ddcutil >/dev/null 2>&1 || { echo "monitor: ddcutil is not installed" >&2; exit 1; }
+ddc() { ddcutil --model "$MODEL" "$@"; }
+
+die() { echo "monitor: $*" >&2; exit 1; }
+
+# Last byte of the brief reply (ddcutil may print unrelated notices first),
+# e.g. "VCP 60 SNC x11" -> "11".
+getvcp_low() {
+  ddc --brief getvcp "$1" 2>/dev/null | tail -1 | awk '{print $NF}' | sed 's/^x//'
+}
+
+pbp_is_on() { [ "$(getvcp_low E6)" = "00" ]; }
+
+# Wait up to ~15 s for PBP to reach the wanted state (E6: 00 = on, 01 = off).
+wait_for_pbp() {
+  i=0
+  while [ $i -lt 8 ]; do
+    [ "$(getvcp_low E6)" = "$1" ] && return 0
+    sleep 2
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# hdmi1|hdmi2|dp1|dp2 -> VCP 60 value, or empty if it isn't one of them
+input_value() {
+  case "$1" in
+    hdmi1) echo 0x11 ;; hdmi2) echo 0x12 ;; dp1) echo 0x0f ;; dp2) echo 0x10 ;;
+  esac
+}
+
+
+case "${1:-}" in
+  status)
+    [ -n "$(getvcp_low E6)" ] || die "no answer from the monitor (is DDC/CI on, cable connected?)"
+    if pbp_is_on; then echo "PBP: on"; else echo "PBP: off"; fi
+    ;;
+  pbp)
+    case "${2:-}" in
+      on)  want=00; value=512 ;;
+      off) want=01; value=0 ;;
+      *) die "usage: monitor pbp on|off" ;;
+    esac
+    # A5 is the window mode: 0 = single screen, 512 = PBP (it reads back as
+    # 256 while PBP is on). A write to A5 is only accepted some of the time
+    # right after a mode change, so try a few times.
+    n=0
+    while [ $n -lt 3 ]; do
+      ddc --noverify setvcp A5 "$value" >/dev/null 2>&1
+      wait_for_pbp "$want" && exit 0
+      n=$((n + 1))
+    done
+    die "PBP did not turn $2 (the monitor ignored the command)"
+    ;;
+  swap)
+    pbp_is_on || die "PBP is off, nothing to swap (turn PBP on in the monitor menu)"
+    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed"
+    ;;
+  input | left)
+    v=$(input_value "${2:-}")
+    [ -n "$v" ] || die "usage: monitor $1 hdmi1|hdmi2|dp1|dp2"
+    ddc setvcp 60 "$v" >/dev/null 2>&1 || die "could not set the input"
+    ;;
+  layout)
+    # Only the left window has an input code (60), and reading it back is NOT
+    # reliable (it has reported the wrong input). So set both windows
+    # explicitly: put the right input on the left, swap the windows (the right
+    # input is now on the right), then put the left input on the left.
+    l=$(input_value "${2:-}"); r=$(input_value "${3:-}")
+    [ -n "$l" ] && [ -n "$r" ] || die "usage: monitor layout <left> <right>  (hdmi1|hdmi2|dp1|dp2)"
+    pbp_is_on || die "PBP is off, there are no two windows (monitor pbp on)"
+    ddc setvcp 60 "$r" >/dev/null 2>&1 || die "could not set the right input"
+    sleep 2
+    ddc --noverify setvcp F6 1 >/dev/null 2>&1 || die "swap failed"
+    sleep 2
+    ddc setvcp 60 "$l" >/dev/null 2>&1 || die "could not set the left input"
+    ;;
+  *)
+    sed -n '6,11p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac

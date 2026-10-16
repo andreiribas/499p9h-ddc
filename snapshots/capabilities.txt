@@ -1,0 +1,117 @@
+Model: 499P9H
+MCCS version: 2.2
+Commands:
+   Op Code: 01 (VCP Request)
+   Op Code: 02 (VCP Response)
+   Op Code: 03 (VCP Set)
+   Op Code: 07 (Timing Request)
+   Op Code: 0C (Save Settings)
+   Op Code: E3 (Capabilities Reply)
+   Op Code: F3 (Capabilities Request)
+VCP Features:
+   Feature: 02 (New control value)
+   Feature: 04 (Restore factory defaults)
+   Feature: 05 (Restore factory brightness/contrast defaults)
+   Feature: 08 (Restore color defaults)
+   Feature: 0B (Color temperature increment)
+   Feature: 0C (Color temperature request)
+   Feature: 10 (Brightness)
+   Feature: 12 (Contrast)
+   Feature: 14 (Select color preset)
+      Values:
+         01: sRGB
+         04: 5000 K
+         05: 6500 K
+         06: 7500 K
+         07: 8200 K
+         08: 9300 K
+         0a: 11500 K
+         0b: User 1
+   Feature: 16 (Video gain: Red)
+   Feature: 18 (Video gain: Green)
+   Feature: 1A (Video gain: Blue)
+   Feature: 52 (Active control)
+   Feature: 60 (Input Source)
+      Values:
+         11: HDMI-1
+         12: HDMI-2
+         0f: DisplayPort-1
+         10: DisplayPort-2
+   Feature: 62 (Audio speaker volume)
+      Values: 00 01 (interpretation unavailable)
+   Feature: 6C (Video black level: Red)
+   Feature: 6E (Video black level: Green)
+   Feature: 70 (Video black level: Blue)
+   Feature: 72 (Gamma)
+      Specific presets of absolute adjustment supported (0xfb)
+      Absolute tolerance: +/- 5% (=0x05)
+      Native gamma: 2.20 (0x78)
+      Specific presets:  1.80 (0x50), 2.00 (0x64), 2.20 (0x78), 2.40 (0x8c), 2.60 (0xa0)
+   Feature: 86 (Display Scaling)
+      Values:
+         01: No scaling
+         02: Max image, no aspect ration distortion
+         08: Linear expansion (compression) on h and v axes
+   Feature: 87 (Sharpness)
+   Feature: 8D (Audio mute/Screen blank)
+      Values: 00 01 (interpretation unavailable)
+   Feature: AC (Horizontal frequency)
+   Feature: AE (Vertical frequency)
+   Feature: B2 (Flat panel sub-pixel layout)
+   Feature: B6 (Display technology type)
+   Feature: C0 (Display usage time)
+   Feature: C6 (Application enable key)
+   Feature: C8 (Display controller type)
+   Feature: CA (OSD/Button Control)
+      Values:
+         01: OSD disabled, button events enabled
+         02: OSD enabled, button events enabled
+   Feature: CC (OSD Language)
+      Values:
+         01: Chinese (traditional, Hantai)
+         02: English
+         03: French
+         04: German
+         05: Italian
+         06: Japanese
+         07: Korean
+         08: Portuguese (Portugal)
+         09: Russian
+         0a: Spanish
+         0b: Swedish
+         0c: Turkish
+         0d: Chinese (simplified / Kantai)
+         0e: Portuguese (Brazil)
+         12: Czech
+         14: Dutch
+         16: Finnish
+         17: Greek
+         1a: Hungarian
+         1e: Polish
+         24: Ukranian
+   Feature: D6 (Power mode)
+      Values:
+         01: DPM: On,  DPMS: Off
+         04: DPM: Off, DPMS: Off
+         05: Write only value to turn off display
+   Feature: DC (Display Mode)
+      Values:
+         00: Standard/Default mode
+         01: Productivity
+         02: Mixed
+         03: Movie
+         05: Games
+         08: Standard/Default mode with intermediate power consumption
+         0b: Unrecognized value
+         0e: Unrecognized value
+         1f: Unrecognized value
+         e1: Unrecognized value
+   Feature: DF (VCP Version)
+   Feature: E9 (Manufacturer specific feature)
+      Values: 00 02 (interpretation unavailable)
+   Feature: EB (Manufacturer specific feature)
+      Values: 00 01 02 03 (interpretation unavailable)
+   Feature: F0 (Manufacturer specific feature)
+      Values: 00 01 (interpretation unavailable)
+   Feature: FD (Manufacturer specific feature)
+   Feature: FF (Manufacturer specific feature)
