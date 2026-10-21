@@ -25,6 +25,7 @@
 #   monitor osd on|off      show the monitor's menu or not (the buttons still work; `osd on` brings it back)
 #   monitor language <name> english french german ... (see the README)
 #   monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain, 0-100 (preset "user")
+#   monitor controls path|list|check <file>|import <file>|remove   extra controls (see README)
 #   monitor profile list | show <name> | apply <name> | delete <name>
 #   monitor profile save <name> [pbp on|off] [input|left <source>]   save the picture settings
 #                           (and PBP / the input, when given) as a profile for `apply`
@@ -173,9 +174,21 @@ setting_code() {
     mute) echo 8D ;; preset) echo 14 ;; gamma) echo 72 ;; mode) echo DC ;;
     scaling) echo 86 ;; osd) echo CA ;; language) echo CC ;;
     gain-red) echo 16 ;; gain-green) echo 18 ;; gain-blue) echo 1A ;;
+    *) custom_field "$1" 3 ;;
   esac
 }
-range_max() { case "$1" in sharpness) echo 10 ;; *) echo 100 ;; esac; }
+range_max() {
+  case "$1" in
+    sharpness) echo 10 ;;
+    brightness | contrast | volume | gain-*) echo 100 ;;
+    *) m=$(custom_field "$1" 5); echo "${m:-100}" ;;
+  esac
+}
+# is_range SETTING: a number 0-max (the built-in sliders, or an imported "range" control)
+is_range() {
+  case "$1" in brightness | contrast | sharpness | volume | gain-*) return 0 ;; esac
+  [ "$(custom_field "$1" 4)" = range ]
+}
 # setting, name, VCP value (decimal). Gamma values are the monitor's presets
 # (0x50 .. 0xa0); mute is 1 = muted, 2 = not muted.
 CHOICES="mute on 1
@@ -227,6 +240,123 @@ language ukrainian 36"
 choice_num() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $2 == n {print $3}'; }
 choice_name() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $3 == n {print $2}'; }
 
+# ---- imported controls ----------------------------------------------------
+# More controls from a file the user wrote or got from someone with the same monitor
+# (for example from what walk.sh found): ~/.config/monitor-ctl/controls.txt, one per line,
+#   name | label | code | kind | values
+# kind is "range" (values: the maximum, e.g. 100) or "choice" (values: name=number pairs,
+# e.g. "off=0 on=1"). Blank lines and lines starting with # are ignored. Imported
+# controls work like the built-in ones: monitor get|set <name>, picture, profiles.
+CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/controls.txt"
+BUILTIN_NAMES="$SETTINGS status doctor pbp swap input left layout picture get set profile controls"
+# Codes an imported control may not use: resets, power, save/keys, and what the
+# built-in controls already use.
+DENIED_CODES="02 04 05 06 08 0A B0 C6 D6 60 A5 F6 10 12 14 16 18 1A 62 72 86 87 8D CA CC DC"
+
+# custom_defs FILE: the entries, trimmed, as name|label|CODE|kind|values
+custom_defs() {
+  [ -r "$1" ] || return 0
+  awk -F'|' '!/^[ \t]*(#|$)/ {
+    for (i = 1; i <= NF; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+    print $1 "|" $2 "|" toupper($3) "|" $4 "|" $5 }' "$1"
+}
+# custom_field NAME N: field N (1 name, 2 label, 3 code, 4 kind, 5 values) of an imported control
+custom_field() { echo "$CUSTOM" | awk -F'|' -v n="$1" '$1 == n {print $'"$2"'; exit}'; }
+
+# controls_check FILE: prints what is wrong (one problem per line); fails if anything is
+controls_check() {
+  [ -r "$1" ] || { echo "cannot read $1"; return 1; }
+  [ "$(wc -c < "$1")" -le 65536 ] || { echo "the file is larger than 64 KB"; return 1; }
+  if [ -n "$(tr -d '\011\012\015\040-\377' < "$1" | head -c 1)" ]; then
+    echo "the file is not plain text (it has control characters)"; return 1
+  fi
+  custom_defs "$1" | awk -F'|' -v builtin=" $BUILTIN_NAMES " -v denied=" $DENIED_CODES " '
+    function bad(m) { printf "entry %d (%s): %s\n", NR, $1, m; err = 1 }
+    {
+      if (NF != 5) { bad("needs 5 fields: name | label | code | kind | values"); next }
+      if ($1 !~ /^[a-z][a-z0-9-]*$/) bad("the name uses lower-case letters, digits and -")
+      else if (index(builtin, " " $1 " ")) bad("that name is already used by the app")
+      else if ($1 in names) bad("duplicate name")
+      names[$1] = 1
+      if ($2 == "") bad("the label is empty")
+      if ($3 !~ /^[0-9A-F][0-9A-F]$/) bad("the code is two hex digits, like E9")
+      else if (index(denied, " " $3 " ")) bad("code " $3 " is not allowed (resets, power, or already controlled by the app)")
+      else if ($3 in codes) bad("duplicate code")
+      codes[$3] = 1
+      if ($4 == "range") {
+        if ($5 !~ /^[0-9]+$/ || $5 + 0 < 1 || $5 + 0 > 65535) bad("a range needs its maximum, 1-65535")
+      } else if ($4 == "choice") {
+        n = split($5, p, " ")
+        if (n < 2) bad("a choice needs at least two name=number pairs")
+        for (i = 1; i <= n; i++)
+          if (p[i] !~ /^[a-z0-9.+-]+=(0x[0-9a-fA-F]+|[0-9]+)$/) bad("bad choice \"" p[i] "\" (use name=number)")
+      } else bad("the kind is range or choice")
+    }
+    END {
+      if (NR == 0) { print "no controls in the file"; err = 1 }
+      if (NR > 64) { print "too many controls (64 at most)"; err = 1 }
+      exit err
+    }'
+}
+
+# check_controls_on_monitor FILE: one line per control, "name (code XX): label - what the
+# monitor said when asked (read-only)". A code that gets no answer is a warning, not an
+# error: the monitor may simply be showing another input right now.
+check_controls_on_monitor() {
+  defs=$(custom_defs "$1")
+  codes=$(echo "$defs" | cut -d'|' -f3 | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  replies=$(vcp_query $codes 2> /dev/null) || replies=""
+  echo "$defs" | while IFS='|' read -r n l c k v; do
+    if [ -z "$replies" ]; then note=""
+    else
+      line=$(echo "$replies" | awk -v c="$c" '$2 == c {print; exit}')
+      # shellcheck disable=SC2086
+      set -- $line
+      case "${3:-}" in
+        "" | ERR) note=" - WARNING: the monitor does not answer code $c" ;;
+        C)
+          cur=$4; max=$5; note=" - answers (now $cur, maximum $max)"
+          if [ "$k" = range ] && [ "$max" != "$v" ]; then note="$note - WARNING: the file says the maximum is $v"; fi
+          ;;
+        SNC | CNC)
+          if [ "$3" = SNC ]; then cur=$((0x${4#x})); else cur=$((0x${7#x})); fi
+          note=" - answers (now $cur)"
+          if [ "$k" = choice ]; then
+            found=""
+            for pair in $v; do [ $((${pair#*=})) = "$cur" ] && found=1; done
+            [ -n "$found" ] || note="$note - WARNING: that is none of the values in the file"
+          fi
+          ;;
+        *) note=" - answers" ;;
+      esac
+    fi
+    printf '%s (code %s): %s%s\n' "$n" "$c" "$l" "$note"
+  done
+  [ -n "$replies" ] || echo "(the monitor did not answer, so the codes were only checked for format)"
+}
+
+CUSTOM=""
+if [ -r "$CONTROLS_FILE" ]; then
+  if errs=$(controls_check "$CONTROLS_FILE"); then
+    CUSTOM=$(custom_defs "$CONTROLS_FILE")
+  else
+    echo "monitor: ignoring $CONTROLS_FILE: $(echo "$errs" | head -1)" >&2
+  fi
+fi
+if [ -n "$CUSTOM" ]; then
+  while IFS='|' read -r cn _ _ ck cv; do
+    SETTINGS="$SETTINGS $cn"
+    [ "$ck" = choice ] || continue
+    for pair in $cv; do
+      CHOICES="$CHOICES
+$cn ${pair%%=*} $((${pair#*=}))"
+    done
+  done <<EOF
+$CUSTOM
+EOF
+fi
+
 # vcp_query CODE... -> the "VCP ..." reply lines (several codes in one call: about
 # 0.4 s for all eight settings)
 vcp_query() {
@@ -248,10 +378,8 @@ setting_show() {
     CNC) cur=$((0x${7#x})); max= ;;
     *) echo "n/a"; return 1 ;;
   esac
-  case "$s" in
-    brightness|contrast|sharpness|volume|gain-*) echo "$cur $max" ;;
-    *) n=$(choice_name "$s" "$cur"); echo "${n:-$cur}" ;;
-  esac
+  if is_range "$s"; then echo "$cur $max"
+  else n=$(choice_name "$s" "$cur"); echo "${n:-$cur}"; fi
 }
 
 get_setting() {
@@ -265,8 +393,7 @@ get_setting() {
 set_setting() {
   code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
   val=${2:-}; [ -n "$val" ] || die "usage: monitor set $1 <value>"
-  case "$1" in
-    brightness|contrast|sharpness|volume|gain-*)
+  if is_range "$1"; then
       max=$(range_max "$1")
       case "$val" in
         [+-][0-9]*)   # relative: needs the current value
@@ -278,17 +405,14 @@ set_setting() {
           [ "$n" -ge 0 ] || n=0 ;;
         *[!0-9]* | "") die "$1 takes a number 0-$max, or +N / -N" ;;
         *) n=$val; [ "$n" -le "$max" ] || die "$1 is 0-$max" ;;
-      esac ;;
-    *)
+      esac
+  else
       val=$(echo "$val" | tr 'A-Z' 'a-z')
       n=$(choice_num "$1" "$val")
-      [ -n "$n" ] || die "$1: '$val' is not one of: $(echo "$CHOICES" | awk -v f="$1" '$1 == f {printf "%s ", $2}')" ;;
-  esac
+      [ -n "$n" ] || die "$1: '$val' is not one of: $(echo "$CHOICES" | awk -v f="$1" '$1 == f {printf "%s ", $2}')"
+  fi
   ddc_set "$code" "$n" || die "could not set $1: $NO_LINK"
-  case "$1" in
-    brightness|contrast|sharpness|volume|gain-*) echo "$1 $n" ;;
-    *) echo "$1 $val" ;;
-  esac
+  if is_range "$1"; then echo "$1 $n"; else echo "$1 $val"; fi
 }
 
 # picture: every setting in one read, "name value" per line (ranges: "name cur max")
@@ -493,6 +617,25 @@ case "${1:-}" in
   brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | gain-red | gain-green | gain-blue)
     if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
     ;;
+  controls)
+    case "${2:-}" in
+      path) echo "$CONTROLS_FILE" ;;
+      list) echo "$CUSTOM" | awk -F'|' 'NF == 5 {printf "%s|%s|%s|%s|%s\n", $1, $2, $3, $4, $5}' ;;
+      check)
+        [ -n "${3:-}" ] || die "usage: monitor controls check <file>"
+        controls_check "$3" || exit 1
+        check_controls_on_monitor "$3"
+        ;;
+      import)
+        [ -n "${3:-}" ] || die "usage: monitor controls import <file>"
+        errs=$(controls_check "$3") || { echo "$errs" >&2; exit 1; }
+        mkdir -p "$(dirname "$CONTROLS_FILE")" && cp "$3" "$CONTROLS_FILE" || die "could not write $CONTROLS_FILE"
+        echo "imported $(custom_defs "$3" | wc -l | tr -d ' ') controls into $CONTROLS_FILE"
+        ;;
+      remove) rm -f "$CONTROLS_FILE" && echo "removed $CONTROLS_FILE" ;;
+      *) die "usage: monitor controls path | list | check <file> | import <file> | remove" ;;
+    esac
+    ;;
   profile)
     case "${2:-}" in
       list) ls "$PROFILE_DIR" 2>/dev/null | grep -E '^[A-Za-z0-9_-]+$' || true ;;
@@ -504,7 +647,7 @@ case "${1:-}" in
     esac
     ;;
   *)
-    sed -n '7,30p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,/^set -u/{/^set -u/!p;}' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

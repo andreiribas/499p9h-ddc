@@ -79,6 +79,38 @@ temperature is User, red/green/blue gain sliders. (Writing a gain makes the moni
 switch to the User preset by itself.) It reads the
 values from the monitor and follows changes made with the monitor's buttons.
 
+## Extra controls from a file
+
+Another monitor (or a TV) has other settings, and other codes. The app and `monitor` can
+load more controls from a plain text file, one per line:
+
+```
+name | label | code | kind | values
+```
+
+- `name`: lower-case letters, digits and `-` (used by `monitor get|set <name>`)
+- `label`: what the app shows
+- `code`: the two hex digits of the VCP code
+- `kind`: `range` (values: the maximum, e.g. `100`) or `choice` (values: `name=number` pairs, e.g. `off=0 on=1`)
+
+```
+# the codes below are only an example: use the ones found for YOUR monitor
+night-mode | Night mode | 9A | choice | off=0 on=1
+backlight  | Backlight  | 9B | range  | 100
+```
+
+In the app: Options > Import controls file. It checks the file first (format, then it asks
+the monitor, read-only, whether each code answers and whether the numbers fit) and shows what
+it found before anything is imported. From the command line: `monitor controls check <file>`,
+`monitor controls import <file>`, `monitor controls list|path|remove`. The imported controls
+show up on the Picture page, in `monitor picture` and in profiles. Codes for factory resets,
+power and the ones the app already uses are refused. Writing a wrong code to a monitor can
+change settings you did not expect, so only import files you trust.
+
+`./walk.sh` is how you find the codes: it suggests one menu setting at a time, you change it
+with the monitor's buttons, and it shows which code changed (and prints a line to start from).
+Its findings (`snapshots/walk-log.md`) stay on your computer: they are not committed.
+
 ## What works, and what doesn't
 
 | | Over DDC |

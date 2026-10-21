@@ -216,6 +216,7 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.pending = {}  # picture setting -> newest value not sent yet
         self.sending = set()  # picture settings with a command running
         self.loading_picture = False
+        self.custom_rows = []  # (row, setting name) of the imported controls on the Picture page
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
@@ -294,6 +295,7 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         self.set_pbp(False)  # until the monitor answers
         self.read_status()
+        self.reload_custom_controls()
 
         # Another computer (or the monitor's buttons) can change PBP, so keep
         # checking: periodically, and whenever this window gets focus again.
@@ -337,7 +339,108 @@ class MonitorWindow(Adw.ApplicationWindow):
         )
         audio.add(self.mute_row)
         page.add(audio)
+
+        # Controls from a file the user imported (Options): the `monitor` script is the
+        # one that reads and checks the file, so this only shows what it lists.
+        self.custom_group = Adw.PreferencesGroup(
+            title="Imported controls", description="From the controls file imported in Options"
+        )
+        self.custom_group.set_visible(False)
+        page.add(self.custom_group)
         return page
+
+    def reload_custom_controls(self):
+        """Ask `monitor controls list` for the imported controls and (re)build their rows."""
+
+        def work():
+            ok, text = run_monitor("controls", "list")
+            GLib.idle_add(finish, ok, text)
+
+        def finish(ok, text):
+            for row, name in self.custom_rows:
+                self.custom_group.remove(row)
+                self.scales.pop(name, None)
+                self.choice_rows.pop(name, None)
+            self.custom_rows = []
+            for line in (text.splitlines() if ok else []):
+                parts = [x.strip() for x in line.split("|")]
+                if len(parts) != 5:
+                    continue
+                name, label, _code, kind, values = parts
+                if kind == "range" and values.isdigit():
+                    row = self.slider_row(name, label, int(values))
+                elif kind == "choice":
+                    options = [(v.split("=")[0].replace("-", " ").capitalize(), v.split("=")[0])
+                               for v in values.split()]
+                    row = Adw.ComboRow(title=label, model=Gtk.StringList.new([n for n, _ in options]))
+                    row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+                    self.choice_rows[name] = (row, options)
+                else:
+                    continue
+                self.custom_group.add(row)
+                self.custom_rows.append((row, name))
+            self.custom_group.set_visible(bool(self.custom_rows))
+            self.load_picture()
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def import_controls(self):
+        """Pick a controls file, show what it contains, and import it if the user agrees."""
+        chooser = Gtk.FileDialog(title="Import controls file")
+
+        def chosen(dialog, result):
+            try:
+                path = dialog.open_finish(result).get_path()
+            except GLib.Error:
+                return  # cancelled
+            self.check_controls_file(path)
+
+        chooser.open(self, None, chosen)
+
+    def check_controls_file(self, path):
+        def work():
+            ok, text = run_monitor("controls", "check", path)
+            GLib.idle_add(finish, ok, text)
+
+        def finish(ok, text):
+            if not ok:
+                alert = Adw.AlertDialog(heading="This file cannot be imported", body=text or "Unknown error")
+                alert.add_response("ok", "OK")
+                alert.present(self)
+                return False
+            count = len([l for l in text.splitlines() if " (code " in l])
+            alert = Adw.AlertDialog(
+                heading=f"Import {count} control{'s' if count != 1 else ''}?",
+                body=text + "\n\nThese controls write to the monitor using the codes in the file, "
+                "so import only files you trust: a wrong code can change settings you did not "
+                "expect. Resets and power codes are refused. Importing replaces controls "
+                "imported before.",
+            )
+            alert.add_response("cancel", "Cancel")
+            alert.add_response("import", "Import")
+            alert.set_response_appearance("import", Adw.ResponseAppearance.SUGGESTED)
+            alert.set_default_response("cancel")
+            alert.connect("response", lambda _a, r: r == "import" and self.do_import_controls(path))
+            alert.present(self)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def do_import_controls(self, path):
+        def done(ok, text):
+            self.toast(text if text else ("Imported" if ok else "Import failed"))
+            if ok:
+                self.reload_custom_controls()
+
+        self.run_async(["controls", "import", path], done)
+
+    def remove_controls(self):
+        def done(ok, text):
+            self.toast("Imported controls removed" if ok else (text or "Failed"))
+            self.reload_custom_controls()
+
+        self.run_async(["controls", "remove"], done)
 
     picture_updating = False  # True while the widgets are being set from the monitor
 
@@ -670,6 +773,22 @@ class MonitorWindow(Adw.ApplicationWindow):
             refresh_switches()
 
         conn.connect("notify::selected", on_connected)
+
+        extra = Adw.PreferencesGroup(
+            title="Extra controls",
+            description="Add controls this app does not have, from a file listing them "
+            "(one per line: name | label | code | kind | values). Useful for another monitor "
+            "or TV: ./walk.sh finds the codes. See the README for the format.",
+        )
+        imp = Adw.ActionRow(title="Import controls file…", activatable=True)
+        imp.add_suffix(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        imp.connect("activated", lambda _r: self.import_controls())
+        extra.add(imp)
+        rem = Adw.ActionRow(title="Remove imported controls", activatable=True)
+        rem.set_sensitive(bool(self.custom_rows))
+        rem.connect("activated", lambda _r: self.remove_controls())
+        extra.add(rem)
+        page.add(extra)
 
         dialog.add(page)
         dialog.present(self)

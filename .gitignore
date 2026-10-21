@@ -3,3 +3,4 @@ __pycache__/
 pbp-experiment.sh
 snapshots/walk-[0-9]*.txt
 snapshots/walk-codes.txt
+snapshots/walk-log.md

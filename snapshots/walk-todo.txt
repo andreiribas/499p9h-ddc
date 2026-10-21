@@ -1,0 +1,18 @@
+# Menu settings still to look for (one per line; edit freely: the names are only
+# guesses at what the monitor's menu calls them). walk.sh shows these as a numbered
+# list, with what the log already says about each.
+Right window input (PBP)
+SmartContrast
+Adaptive Sync
+SmartResponse (response time)
+Pixel orbiting
+Power LED
+Power sensor
+Light sensor
+OSD position (horizontal)
+OSD transparency
+OSD timeout
+USB standby mode
+USB upstream / KVM
+Audio source
+Auto input switch
