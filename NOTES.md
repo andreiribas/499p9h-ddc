@@ -129,3 +129,9 @@ command.
   unreliable, so this may mean that reading `60` follows the right window. Not settled: PBP
   was off when it was read afterwards. To check with PBP on: read `60`, change PBP Input,
   read `60`, then `monitor swap` and read `60` again.
+- The monitor's Picture menu (as listed by the owner): HDR (Normal, greyed out), Picture Format
+  (Wide Screen), Brightness, Contrast, Sharpness, SmartResponse, SmartContrast, Gamma, Over Scan
+  (Off, greyed out). HDR and Over Scan cannot be changed, so there is nothing to find.
+  Picture Format is probably VCP 86 (read as 0x08 = "Wide Screen"?). The menu's Sharpness
+  scale is 0-100 while VCP 87 reports 0-10 (maximum 10): the menu value is 10x. `monitor` and
+  the app now use the menu's 0-100 (steps of 10; other values are rounded).

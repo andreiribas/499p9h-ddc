@@ -1,22 +1,11 @@
-# Menu settings still to look for (one per line; edit freely: the names are only
-# guesses at what the monitor's menu calls them). "Name | text": the text is something
-# to set up first; walk.sh waits for it BEFORE reading the baseline, so that it is not
-# mistaken for the change. walk.sh shows these as a numbered
-# list, with what the log already says about each.
+# Menu settings to look for, one per line, taken from the monitor's own menus (so the
+# names match what you see there). "Name | text": the text is something to set up first;
+# walk.sh waits for it BEFORE reading the baseline, so that it is not mistaken for the
+# change. When every line has been walked, add the entries of your other menus here.
 PBP Input | In the monitor's menu set PBP mode to PBP (or run ./monitor pbp on) and wait until both pictures show. Then you will change PBP Input (the right window's source), for example from USB-C to HDMI-1.
 SmartContrast
-Adaptive Sync
 SmartResponse | Check that SmartResponse is Off (it is the current value) and do not change it yet. In step 3 you will change it from Off to Fast.
 SmartResponse: Fast to Faster | Set SmartResponse to Fast now (it is Off). Then in step 3 change it from Fast to Faster.
 SmartResponse: Faster to Fastest | Set SmartResponse to Faster now. Then in step 3 change it from Faster to Fastest.
-Pixel orbiting
-Power LED
-Power sensor
-Light sensor
-OSD position (horizontal)
-OSD transparency
-OSD timeout
-USB standby mode
-USB upstream / KVM
-Audio source
-Auto input switch
+Picture Format | Picture Format is Wide Screen now: do not change it yet. In step 3 change it to the NEXT option the menu offers, and write down its name.
+Picture Format: next option | Set Picture Format to the second option now. In step 3 change it to the third option (answer x if it only has two) and write down its name.

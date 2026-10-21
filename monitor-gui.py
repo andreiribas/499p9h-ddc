@@ -32,7 +32,7 @@ except ModuleNotFoundError:
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 MONITOR = os.path.join(HERE, "monitor")
@@ -69,33 +69,36 @@ SETTLE_SECONDS = 20
 NO_LINK_SUBTITLE = "Not answering: the monitor is probably showing another input"
 
 
-# Picture page: (setting the `monitor` script knows, label, maximum) for the sliders,
-# and (setting, label, [(label shown, value the script takes)]) for the dropdowns.
-PICTURE_RANGES = [
-    ("brightness", "Brightness", 100),
-    ("contrast", "Contrast", 100),
-    ("sharpness", "Sharpness", 10),
-]
-PICTURE_CHOICES = [
-    ("Colour", [
-        ("preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
-            ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
-        ("gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
-        ("mode", "Display mode", [(n, n.lower()) for n in
+# The sidebar's menus, in the order of the monitor's own menu: (key, title shown on the
+# left, icon, [item, ...]). An item is
+#   ("range", setting, label, maximum)  a slider,
+#   ("choice", setting, label, [(label shown, value the `monitor` script takes)])  a dropdown,
+#   ("mute",)  the mute switch.
+CATEGORIES = [
+    ("picture", "Picture", "display-brightness-symbolic", [
+        ("range", "brightness", "Brightness", 100),
+        ("range", "contrast", "Contrast", 100),
+        ("range", "sharpness", "Sharpness", 100),
+        ("choice", "smartresponse", "SmartResponse", [
+            ("Off", "off"), ("Fast", "fast"), ("Faster", "faster"), ("Fastest", "fastest")]),
+        ("choice", "smartcontrast", "SmartContrast", [("Off", "off"), ("On", "on")]),
+        ("choice", "gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
+        ("choice", "scaling", "Picture format", [
+            ("No scaling", "noscale"), ("Keep aspect ratio", "aspect"), ("Stretch to fill", "stretch")]),
+        ("choice", "mode", "Display mode", [(n, n.lower()) for n in
             ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
     ]),
-    ("Screen", [
-        ("scaling", "Scaling", [("No scaling", "noscale"), ("Keep aspect ratio", "aspect"),
-                                ("Stretch to fill", "stretch")]),
-        ("smartresponse", "SmartResponse", [("Off", "off"), ("Fast", "fast"),
-                                            ("Faster", "faster"), ("Fastest", "fastest")]),
+    ("colour", "Colour", "preferences-color-symbolic", [
+        ("choice", "preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
+            ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
     ]),
-    ("Energy", [
-        ("smartcontrast", "SmartContrast", [("Off", "off"), ("On", "on")]),
+    ("audio", "Audio", "audio-volume-high-symbolic", [
+        ("range", "volume", "Volume", 100),
+        ("mute",),
     ]),
-    ("On-screen menu", [
-        ("osd", "Monitor's menu", [("Shown", "on"), ("Hidden (buttons still work)", "off")]),
-        ("language", "Language", [
+    ("menu", "On-screen menu", "preferences-system-symbolic", [
+        ("choice", "osd", "Monitor's menu", [("Shown", "on"), ("Hidden (buttons still work)", "off")]),
+        ("choice", "language", "Language", [
             ("English", "english"), ("French", "french"), ("German", "german"),
             ("Italian", "italian"), ("Spanish", "spanish"), ("Portuguese", "portuguese"),
             ("Portuguese (Brazil)", "ptbr"), ("Dutch", "dutch"), ("Swedish", "swedish"),
@@ -112,6 +115,13 @@ PICTURE_GAIN = [("gain-red", "Red"), ("gain-green", "Green"), ("gain-blue", "Blu
 # consumption): the app asks first, unless that is switched off in Options. Imported
 # controls get the same when their line in the controls file ends with "| energy".
 ENERGY_SETTINGS = {"smartcontrast": "SmartContrast"}
+# Sharpness is 0-100 like the monitor's menu, but the monitor only has 11 steps of it
+SLIDER_STEPS = {"sharpness": 10}
+# The status bar at the bottom is always there. While a change is being sent to the monitor
+# it says what is being applied and the controls are read-only; "Done" stays this long
+# after the last change, so that a fast one does not just flash by
+STATUS_READY = "Ready"
+BUSY_MIN_SECONDS = 0.6
 # a slider sends its value this long after it stops moving
 SLIDER_DELAY_MS = 250
 
@@ -215,7 +225,7 @@ def save_state(state):
 
 class MonitorWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Monitor", default_width=460, default_height=560)
+        super().__init__(application=app, title="Monitor", default_width=900, default_height=640)
         self.state = load_state()
         self.busy = False
         self.updating = False  # True while the UI is being set from code
@@ -227,6 +237,8 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.sending = set()  # picture settings with a command running
         self.loading_picture = False
         self.custom_rows = []  # (row, setting name) of the imported controls on the Picture page
+        self.busy_count = 0  # changes being applied; the controls are read-only while > 0
+        self.busy_hide_source = None  # timer that hides the status bar after the last change
         self.energy_custom = {}  # imported setting -> (label, values that mean "off")
         self.choice_prev = {}  # dropdown setting -> index it had before the user's change
 
@@ -292,18 +304,51 @@ class MonitorWindow(Adw.ApplicationWindow):
         note.add(label)
         page.add(note)
 
-        self.content = page
-        self.stack = Adw.ViewStack()
-        self.stack.add_titled_with_icon(page, "input", "Input", "video-display-symbolic")
-        self.stack.add_titled_with_icon(
-            self.build_picture_page(), "picture", "Picture", "preferences-desktop-appearance-symbolic"
-        )
-        self.stack.connect("notify::visible-child", lambda *_a: self.on_page_changed())
-        header.set_title_widget(Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
+        # Menus on the left (like the monitor's own), the controls of the chosen one on the right
+        self.pages = {"input": page}
+        self.pages.update(self.build_category_pages())
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        for key, pg in self.pages.items():
+            self.stack.add_named(pg, key)
+
+        entries = [("input", "Input", "video-display-symbolic")]
+        entries += [(key, title, icon) for key, title, icon, _items in CATEGORIES]
+        entries.append(("imported", "Imported controls", "list-add-symbolic"))
+        self.sidebar_keys = [key for key, _t, _i in entries]
+        self.page_titles = {key: title for key, title, _i in entries}
+        self.sidebar = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, css_classes=["navigation-sidebar"])
+        for _key, title, icon in entries:
+            box = Gtk.Box(spacing=12, margin_top=10, margin_bottom=10, margin_start=6, margin_end=6)
+            box.append(Gtk.Image.new_from_icon_name(icon))
+            box.append(Gtk.Label(label=title, xalign=0, hexpand=True))
+            self.sidebar.append(box)
+        self.sidebar.connect("row-selected", self.on_sidebar_row)
+        side_view = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=self.sidebar, vexpand=True))
+        side_view.add_top_bar(Adw.HeaderBar(title_widget=Adw.WindowTitle(title="Monitor")))
+        sidebar_page = Adw.NavigationPage(title="Monitor", child=side_view)
+
+        self.content_title = Adw.WindowTitle(title="Input")
+        header.set_title_widget(self.content_title)
+        self.banner = Adw.Banner(title=NO_LINK_SUBTITLE, revealed=False)
         self.toasts = Adw.ToastOverlay(child=self.stack)
         view = Adw.ToolbarView(content=self.toasts)
         view.add_top_bar(header)
-        self.set_content(view)
+        view.add_top_bar(self.banner)
+        self.content_page = Adw.NavigationPage(title="Input", child=view)
+
+        self.split = Adw.NavigationSplitView(
+            sidebar=sidebar_page, content=self.content_page, min_sidebar_width=190, max_sidebar_width=250
+        )
+        try:  # on a narrow window the menus and the controls take turns
+            narrow = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 600sp"))
+            narrow.add_setter(self.split, "collapsed", True)
+            self.add_breakpoint(narrow)
+        except (AttributeError, TypeError, GLib.Error):
+            pass
+        outer = Adw.ToolbarView(content=self.split)
+        outer.add_bottom_bar(self.build_status_bar())  # the whole window's width, always there
+        self.set_content(outer)
+        self.sidebar.select_row(self.sidebar.get_row_at_index(0))
 
         self.set_pbp(False)  # until the monitor answers
         self.read_status()
@@ -316,24 +361,34 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     # ---- picture page ----------------------------------------------------
 
-    def build_picture_page(self):
-        page = Adw.PreferencesPage()
-        self.picture_group = Adw.PreferencesGroup(title="Picture")
+    def build_category_pages(self):
+        """One page per menu in CATEGORIES (plus the imported controls), as {key: page}. The
+        widgets are remembered by setting name, so reads and changes find them."""
         self.scales = {}
-        for name, title, top in PICTURE_RANGES:
-            self.picture_group.add(self.slider_row(name, title, top))
-        page.add(self.picture_group)
-
         self.choice_rows = {}
-        for group_title, choices in PICTURE_CHOICES:
-            group = Adw.PreferencesGroup(title=group_title)
-            for name, title, options in choices:
-                row = Adw.ComboRow(title=title, model=Gtk.StringList.new([n for n, _ in options]))
-                row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
-                self.choice_rows[name] = (row, options)
-                group.add(row)
+        pages = {}
+        for key, _title, _icon, items in CATEGORIES:
+            page = Adw.PreferencesPage()
+            group = Adw.PreferencesGroup()
+            for item in items:
+                if item[0] == "range":
+                    group.add(self.slider_row(item[1], item[2], item[3]))
+                elif item[0] == "choice":
+                    _kind, name, label, options = item
+                    row = Adw.ComboRow(title=label, model=Gtk.StringList.new([n for n, _ in options]))
+                    row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+                    self.choice_rows[name] = (row, options)
+                    group.add(row)
+                else:  # mute
+                    self.mute_row = Adw.SwitchRow(title="Mute")
+                    self.mute_row.connect(
+                        "notify::active",
+                        lambda r, _p: self.picture_updating
+                        or self.send_setting("mute", "on" if r.get_active() else "off"),
+                    )
+                    group.add(self.mute_row)
             page.add(group)
-            if group_title == "Colour":  # the gain belongs right under the colour settings
+            if key == "colour":  # the gain belongs under the colour temperature it applies to
                 self.gain_group = Adw.PreferencesGroup(
                     title="RGB gain", description="Used by the User colour temperature"
                 )
@@ -341,25 +396,33 @@ class MonitorWindow(Adw.ApplicationWindow):
                     self.gain_group.add(self.slider_row(name, title, 100))
                 self.gain_group.set_visible(False)
                 page.add(self.gain_group)
-
-        audio = Adw.PreferencesGroup(title="Audio")
-        audio.add(self.slider_row("volume", "Volume", 100))
-        self.mute_row = Adw.SwitchRow(title="Mute")
-        self.mute_row.connect(
-            "notify::active",
-            lambda r, _p: self.picture_updating or self.send_setting("mute", "on" if r.get_active() else "off"),
-        )
-        audio.add(self.mute_row)
-        page.add(audio)
+            pages[key] = page
 
         # Controls from a file the user imported (Options): the `monitor` script is the
         # one that reads and checks the file, so this only shows what it lists.
-        self.custom_group = Adw.PreferencesGroup(
-            title="Imported controls", description="From the controls file imported in Options"
-        )
-        self.custom_group.set_visible(False)
-        page.add(self.custom_group)
-        return page
+        imported = Adw.PreferencesPage()
+        self.custom_group = Adw.PreferencesGroup(description="From the controls file imported in Options")
+        imported.add(self.custom_group)
+        pages["imported"] = imported
+        return pages
+
+    def on_sidebar_row(self, _listbox, row):
+        if row is None:
+            return
+        key = self.sidebar_keys[row.get_index()]
+        self.stack.set_visible_child_name(key)
+        self.content_title.set_title(self.page_titles[key])
+        self.content_page.set_title(self.page_titles[key])
+        self.split.set_show_content(True)
+        if key != "input":
+            self.load_picture()
+
+    def update_imported_row(self):
+        """The 'Imported controls' menu only exists while there are imported controls."""
+        row = self.sidebar.get_row_at_index(len(self.sidebar_keys) - 1)
+        row.set_visible(bool(self.custom_rows))
+        if not self.custom_rows and self.stack.get_visible_child_name() == "imported":
+            self.sidebar.select_row(self.sidebar.get_row_at_index(0))
 
     def reload_custom_controls(self):
         """Ask `monitor controls list` for the imported controls and (re)build their rows."""
@@ -396,7 +459,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                     continue
                 self.custom_group.add(row)
                 self.custom_rows.append((row, name))
-            self.custom_group.set_visible(bool(self.custom_rows))
+            self.update_imported_row()
             self.load_picture()
             return False
 
@@ -462,15 +525,19 @@ class MonitorWindow(Adw.ApplicationWindow):
     picture_updating = False  # True while the widgets are being set from the monitor
 
     def slider_row(self, name, title, top):
-        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, top, 1)
-        scale.set_draw_value(True)
-        scale.set_value_pos(Gtk.PositionType.RIGHT)
+        step = SLIDER_STEPS.get(name, 1)
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, top, step)
+        scale.set_draw_value(False)
         scale.set_digits(0)
         scale.set_size_request(220, -1)
         scale.set_valign(Gtk.Align.CENTER)
         scale.connect("value-changed", lambda sc, n=name: self.on_slider(n, sc))
         row = Adw.ActionRow(title=title)
+        value = Gtk.Label(width_chars=4, xalign=1, css_classes=["numeric"])
+        scale.connect("value-changed", lambda sc, lab=value: lab.set_label(str(int(sc.get_value()))))
+        value.set_label(str(int(scale.get_value())))
         row.add_suffix(scale)
+        row.add_suffix(value)
         self.scales[name] = scale
         return row
 
@@ -480,8 +547,18 @@ class MonitorWindow(Adw.ApplicationWindow):
         if name in self.debounce:
             GLib.source_remove(self.debounce[name])
         value = int(scale.get_value())
+        step = SLIDER_STEPS.get(name, 1)
+        if step > 1:  # land on the monitor's own steps
+            snapped = int(round(value / step)) * step
+            if snapped != value:
+                self.picture_updating = True
+                scale.set_value(snapped)
+                self.picture_updating = False
+                value = snapped
 
         def fire():
+            if self.pointer_down():  # still dragging: the dialog would interrupt the drag
+                return True
             del self.debounce[name]
             self.send_setting(name, value)
             return False
@@ -552,6 +629,7 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.pending[name] = value
         if name not in self.sending:
             self.sending.add(name)
+            self.begin_busy(f"Applying {name.replace('-', ' ')}…")
             self.flush_setting(name)
 
     def flush_setting(self, name):
@@ -566,12 +644,14 @@ class MonitorWindow(Adw.ApplicationWindow):
             if not ok:
                 self.pending.pop(name, None)
                 self.sending.discard(name)
+                self.end_busy()
                 self.toast(text or "The monitor did not respond")
                 self.load_picture()  # show what the monitor really has
             elif name in self.pending:
                 self.flush_setting(name)
             else:
                 self.sending.discard(name)
+                self.end_busy()
             return False
 
         threading.Thread(target=work, daemon=True).start()
@@ -592,11 +672,11 @@ class MonitorWindow(Adw.ApplicationWindow):
             if self.debounce or self.pending or self.sending:
                 return False  # the user moved something meanwhile: it wins
             if not ok:
-                self.picture_group.set_description(NO_LINK_SUBTITLE)
+                self.banner.set_revealed(True)
                 if announce:
                     self.toast(text or "The monitor did not answer")
                 return False
-            self.picture_group.set_description("")
+            self.banner.set_revealed(False)
             self.picture_updating = True
             for line in text.splitlines():
                 parts = line.split()
@@ -620,12 +700,8 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def on_page_changed(self):
-        if self.stack.get_visible_child_name() == "picture":
-            self.load_picture()
-
     def refresh(self, announce=False):
-        if self.stack.get_visible_child_name() == "picture":
+        if self.stack.get_visible_child_name() != "input":
             self.load_picture(announce=announce)
         else:
             self.read_status(announce=announce)
@@ -683,7 +759,7 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     def set_busy(self, busy):
         self.busy = busy
-        self.content.set_sensitive(not busy)
+        self.refresh_lock()
         if busy:
             self.spinner.start()
         else:
@@ -700,11 +776,83 @@ class MonitorWindow(Adw.ApplicationWindow):
         )
         save_state(self.state)
 
+    def build_status_bar(self):
+        """The bar at the bottom of the window. It is always there: "Ready" when idle, a
+        spinner and what is being applied while a change is sent to the monitor."""
+        self.status_spinner = Gtk.Spinner(width_request=16, height_request=16)
+        self.status_label = Gtk.Label(
+            label=STATUS_READY, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END
+        )
+        row = Gtk.Box(spacing=10, margin_top=7, margin_bottom=7, margin_start=16, margin_end=16)
+        row.append(self.status_spinner)
+        row.append(self.status_label)
+        bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        bar.append(Gtk.Separator())
+        bar.append(row)
+        return bar
+
+    def refresh_lock(self):
+        """The controls are read-only while a change is being applied (or a read runs)."""
+        free = self.busy_count == 0 and not self.busy
+        for page in self.pages.values():
+            page.set_sensitive(free)
+
+    def begin_busy(self, text):
+        """Show `text` in the status bar and make the controls read-only."""
+        self.busy_count += 1
+        if self.busy_hide_source is not None:
+            GLib.source_remove(self.busy_hide_source)
+            self.busy_hide_source = None
+        self.status_label.set_label(text)
+        self.status_spinner.start()
+        self.refresh_lock()
+
+    def end_busy(self):
+        self.busy_count = max(0, self.busy_count - 1)
+        self.refresh_lock()
+        if self.busy_count:
+            return
+        self.status_spinner.stop()
+        self.status_label.set_label("Done")
+
+        def idle():  # "Done" stays a moment, then the bar goes back to "Ready"
+            self.busy_hide_source = None
+            if self.busy_count == 0:
+                self.status_label.set_label(STATUS_READY)
+            return False
+
+        self.busy_hide_source = GLib.timeout_add(int(BUSY_MIN_SECONDS * 1000), idle)
+
+    @staticmethod
+    def busy_text(args):
+        """What the dialog says while `monitor <args>` runs."""
+        if args[:2] == ["pbp", "on"]:
+            return "Turning PBP on… (this can take several seconds)"
+        if args[:2] == ["pbp", "off"]:
+            return "Turning PBP off… (this can take several seconds)"
+        return {
+            "input": "Switching the input…",
+            "swap": "Swapping the windows…",
+            "controls": "Updating the controls…",
+        }.get(args[0], "Applying the change…")
+
+    def pointer_down(self):
+        """True while the main mouse button is held (a slider is being dragged)."""
+        try:
+            surface = self.get_surface()
+            _ok, _x, _y, mask = surface.get_device_position(self.get_display().get_default_seat().get_pointer())
+            return bool(mask & Gdk.ModifierType.BUTTON1_MASK)
+        except (AttributeError, TypeError):
+            return False
+
     def run_async(self, args, done):
-        """Run `monitor <args>` off the UI thread, then call done(ok, text)."""
+        """Run `monitor <args>` off the UI thread, then call done(ok, text). Anything but
+        a read shows what is being applied in the status bar and locks the controls."""
         self.set_busy(True)
-        if args[0] != "status":
+        changes = args[0] != "status"
+        if changes:
             self.last_apply = time.monotonic()
+            self.begin_busy(self.busy_text(args))
 
         def work():
             ok, text = run_monitor(*args)
@@ -712,8 +860,9 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         def finish(ok, text):
             self.set_busy(False)
-            if args[0] != "status":
+            if changes:
                 self.last_apply = time.monotonic()  # settle time counts from the end
+                self.end_busy()
             done(ok, text)
             return False
 
@@ -895,7 +1044,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.infer_source(False)
             else:
                 self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
-            if ok and self.stack.get_visible_child_name() == "picture":
+            if ok and self.stack.get_visible_child_name() != "input":
                 self.load_picture()  # settings changed with the monitor's buttons
             return False
 

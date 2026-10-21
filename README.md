@@ -63,7 +63,8 @@ To find more controls, `./walk.sh` is a guided, read-only search: you change one
 at a time with the monitor's buttons and it shows which codes changed (see `walk.sh`).
 
 Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
-volume (`62`) 0-100, sharpness (`87`) 0-10, `mute` on/off (`8D`), colour `preset`
+volume (`62`) 0-100, sharpness (`87`) 0-100 like the monitor's menu (the monitor has 11
+steps, so it moves in steps of 10: 54 is rounded to 50), `mute` on/off (`8D`), colour `preset`
 (`14`: srgb 5000k 6500k 7500k 8200k 9300k 11500k user), `gamma` (`72`: 1.8 2.0 2.2
 2.4 2.6) and `mode` (`DC`: standard productivity mixed movie games). The names of the
 `mode` values come from the monitor's capability list and are not checked against its menu.
@@ -73,18 +74,28 @@ Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as
 
 ## App
 
-`monitor-gui.py` (GTK 4 + libadwaita, needs `python3-gi` and `gir1.2-adw-1`;
-installed as "Monitor Control"): a PBP switch, a source picker for one screen
-or a left and a right picker, Swap and Apply.
+`monitor-gui.py` (GTK 4 + libadwaita, needs `python3-gi` and `gir1.2-adw-1`; installed as
+"Monitor Control") is laid out like the monitor's own menu: the menus are listed on the left,
+and the controls of the one you click are on the right (on a narrow window they take turns).
+
+| Menu | Controls |
+|---|---|
+| Input | the PBP switch, a source picker for one screen or a left and a right picker, Swap and Apply |
+| Picture | brightness, contrast, sharpness, SmartResponse, SmartContrast, gamma, picture format, display mode |
+| Colour | colour temperature, and the red/green/blue gain when it is User (writing a gain makes the monitor switch to the User preset by itself) |
+| Audio | volume, mute |
+| On-screen menu | show/hide the monitor's menu, its language |
+| Imported controls | controls imported from a file (only listed when there are some) |
+
+The values are read from the monitor when you open a menu, and follow changes made with the
+monitor's buttons. A status bar along the bottom of the window is always there: it says "Ready",
+and while a change is being sent to the monitor it says what is being applied and all the
+controls are read-only until it is done. A banner appears at the top when the monitor does
+not answer (it is probably showing another input).
+
 Turning on a setting that can increase the monitor's energy consumption (SmartContrast, and
 imported controls marked `energy`) asks for confirmation first, like the monitor's own menu.
 Options > "Warn before changing energy settings" switches that off (it is on by default).
-
-A second page, **Picture**, has sliders for brightness, contrast, sharpness and volume,
-mute, and dropdowns for colour temperature, gamma and display mode, and, when the colour
-temperature is User, red/green/blue gain sliders. (Writing a gain makes the monitor
-switch to the User preset by itself.) It reads the
-values from the monitor and follows changes made with the monitor's buttons.
 
 ## Extra controls from a file
 
@@ -113,7 +124,7 @@ In the app: Options > Import controls file. It checks the file first (format, th
 the monitor, read-only, whether each code answers and whether the numbers fit) and shows what
 it found before anything is imported. From the command line: `monitor controls check <file>`,
 `monitor controls import <file>`, `monitor controls list|path|remove`. The imported controls
-show up on the Picture page, in `monitor picture` and in profiles. Codes for factory resets,
+show up under "Imported controls", in `monitor picture` and in profiles. Codes for factory resets,
 power and the ones the app already uses are refused. Writing a wrong code to a monitor can
 change settings you did not expect, so only import files you trust.
 

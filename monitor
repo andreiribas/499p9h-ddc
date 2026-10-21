@@ -167,7 +167,9 @@ input_value() {
 
 # ---- picture settings -----------------------------------------------------
 # Standard MCCS codes, listed in the monitor's capabilities (snapshots/capabilities.txt).
-# Ranges: brightness, contrast, volume, RGB gain 0-100, sharpness 0-10. The gain only
+# Ranges: brightness, contrast, volume, RGB gain 0-100. Sharpness is shown as in the
+# monitor's menu, 0-100, but the monitor takes 0-10: the menu value is 10 times the code's
+# (see sharp_to_code / sharp_from_code). The gain only
 # shows when the colour preset is "user". Choices are named.
 SETTINGS="brightness contrast sharpness volume mute preset gamma mode scaling osd language smartcontrast smartresponse gain-red gain-green gain-blue"
 setting_code() {
@@ -182,11 +184,13 @@ setting_code() {
 }
 range_max() {
   case "$1" in
-    sharpness) echo 10 ;;
-    brightness | contrast | volume | gain-*) echo 100 ;;
+    brightness | contrast | sharpness | volume | gain-*) echo 100 ;;
     *) m=$(custom_field "$1" 5); echo "${m:-100}" ;;
   esac
 }
+# Sharpness: the monitor's menu shows 0-100, the monitor's code (VCP 87) takes 0-10.
+sharp_to_code() { echo $((($1 + 5) / 10)); }
+sharp_from_code() { echo $(($1 * 10)); }
 # is_range SETTING: a number 0-max (the built-in sliders, or an imported "range" control)
 is_range() {
   case "$1" in brightness | contrast | sharpness | volume | gain-*) return 0 ;; esac
@@ -392,7 +396,8 @@ setting_show() {
     CNC) cur=$((0x${7#x})); max= ;;
     *) echo "n/a"; return 1 ;;
   esac
-  if is_range "$s"; then echo "$cur $max"
+  if [ "$s" = sharpness ]; then echo "$(sharp_from_code "$cur") 100"
+  elif is_range "$s"; then echo "$cur $max"
   else n=$(choice_name "$s" "$cur"); echo "${n:-$cur}"; fi
 }
 
@@ -425,8 +430,11 @@ set_setting() {
       n=$(choice_num "$1" "$val")
       [ -n "$n" ] || die "$1: '$val' is not one of: $(echo "$CHOICES" | awk -v f="$1" '$1 == f {printf "%s ", $2}')"
   fi
+  # the monitor takes sharpness 0-10: the menu's 0-100 is rounded to its nearest step of 10
+  if [ "$1" = sharpness ]; then n=$(sharp_to_code "$n"); fi
   ddc_set "$code" "$n" || die "could not set $1: $NO_LINK"
-  if is_range "$1"; then echo "$1 $n"; else echo "$1 $val"; fi
+  if [ "$1" = sharpness ]; then echo "$1 $(sharp_from_code "$n")"
+  elif is_range "$1"; then echo "$1 $n"; else echo "$1 $val"; fi
 }
 
 # picture: every setting in one read, "name value" per line (ranges: "name cur max")

@@ -38,7 +38,7 @@ known_name() {
   case "$1" in
     F0) echo "monitor smartcontrast" ;; EB) echo "monitor smartresponse" ;; 10) echo "monitor brightness" ;; 12) echo "monitor contrast" ;; 14) echo "monitor preset" ;;
     16 | 18 | 1A) echo "monitor gain-red|green|blue" ;; 60) echo "monitor input: sets the LEFT window; reading it is unreliable" ;;
-    62) echo "monitor volume" ;; 72) echo "monitor gamma" ;; 86) echo "monitor scaling" ;;
+    62) echo "monitor volume" ;; 72) echo "monitor gamma" ;; 86) echo "monitor scaling (the menu's Picture Format?)" ;;
     87) echo "monitor sharpness" ;; 8D) echo "monitor mute" ;; A5) echo "monitor pbp" ;;
     CA) echo "monitor osd" ;; CC) echo "monitor language" ;; DC) echo "monitor mode" ;;
     F6) echo "monitor swap" ;;
@@ -60,6 +60,7 @@ looks_known() {
     *brightness*) echo "monitor brightness" ;; *contrast*) echo "monitor contrast" ;;
     *sharpness*) echo "monitor sharpness" ;; *volume*) echo "monitor volume" ;;
     *mute*) echo "monitor mute" ;; *gamma*) echo "monitor gamma" ;;
+    *"picture format"*) echo "monitor scaling (VCP 86)" ;;
     *"colour temp"* | *"color temp"* | *preset*) echo "monitor preset" ;;
     *gain*) echo "monitor gain-red|gain-green|gain-blue" ;; *scaling*) echo "monitor scaling" ;;
     *language*) echo "monitor language" ;; *swap*) echo "monitor swap" ;;
@@ -280,6 +281,7 @@ else
   }
 fi
 known=$(looks_known "$name")
+if todo_items | grep -qixF -- "$name"; then known=""; fi   # listed on purpose: no warning
 if [ -n "$known" ]; then
   printf 'That one is already controlled (%s): walking it only repeats what we know.\nWalk it anyway? [y/N] ' "$known"
   read -r yn
