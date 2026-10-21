@@ -115,3 +115,14 @@ app's Apply in PBP mode sets only the left. The app's Right picker just records 
 menu is set to, so Swap can keep the pickers in step. `layout` stays as an experimental
 command.
 
+
+## Found with walk.sh (2026-10-21)
+
+- **F0 = SmartContrast** (0 = off, 1 = on). Found by turning SmartContrast on in the
+  monitor's menu: only F0 changed (0 -> 1). The menu asks for a confirmation first (it can
+  increase the energy consumption); the app asks as well.
+- **PBP Input** (the menu's name for the right window's source): one round showed code `60`
+  moving (0x10 -> 0x11). `60` is what sets the LEFT window, and reading it has been
+  unreliable, so this may mean that reading `60` follows the right window. Not settled: PBP
+  was off when it was read afterwards. To check with PBP on: read `60`, change PBP Input,
+  read `60`, then `monitor swap` and read `60` again.

@@ -36,8 +36,8 @@ if [ -r "$cache" ]; then target="--bus $(cat "$cache")"; else target="--model '$
 # The codes the `monitor` command already controls, to tell them from new finds.
 known_name() {
   case "$1" in
-    10) echo "monitor brightness" ;; 12) echo "monitor contrast" ;; 14) echo "monitor preset" ;;
-    16 | 18 | 1A) echo "monitor gain-red|green|blue" ;; 60) echo "monitor input" ;;
+    F0) echo "monitor smartcontrast" ;; 10) echo "monitor brightness" ;; 12) echo "monitor contrast" ;; 14) echo "monitor preset" ;;
+    16 | 18 | 1A) echo "monitor gain-red|green|blue" ;; 60) echo "monitor input: sets the LEFT window; reading it is unreliable" ;;
     62) echo "monitor volume" ;; 72) echo "monitor gamma" ;; 86) echo "monitor scaling" ;;
     87) echo "monitor sharpness" ;; 8D) echo "monitor mute" ;; A5) echo "monitor pbp" ;;
     CA) echo "monitor osd" ;; CC) echo "monitor language" ;; DC) echo "monitor mode" ;;
@@ -51,7 +51,7 @@ KNOWN_LIST="brightness, contrast, sharpness, volume, mute, colour temperature, g
 # The monitor command for a setting name that is already controlled (empty if not).
 looks_known() {
   l=$(echo "$1" | tr 'A-Z' 'a-z')
-  case "$l" in *smart*) return 0 ;; esac   # SmartContrast, SmartImage...: not the plain setting
+  case "$l" in *smartcontrast*) echo "monitor smartcontrast"; return 0 ;; *smart*) return 0 ;; esac
   case "$l" in
     *brightness*) echo "monitor brightness" ;; *contrast*) echo "monitor contrast" ;;
     *sharpness*) echo "monitor sharpness" ;; *volume*) echo "monitor volume" ;;
@@ -71,7 +71,8 @@ todo_items() { grep -v -e '^#' -e '^$' "$todo_file" 2> /dev/null | sed 's/[[:spa
 # does not show up as a change), empty if nothing
 todo_setup() {
   grep -v -e '^#' -e '^$' "$todo_file" 2> /dev/null | awk -F'|' -v n="$(echo "$1" | tr 'A-Z' 'a-z')" '
-    { name = $1; gsub(/^[ \t]+|[ \t]+$/, "", name); if (tolower(name) == n) { sub(/^[^|]*\|[ \t]*/, ""); print; exit } }'
+    index($0, "|") { name = $1; gsub(/^[ \t]+|[ \t]+$/, "", name)
+      if (tolower(name) == n) { sub(/^[^|]*\|[ \t]*/, ""); print; exit } }'
 }
 
 # item_status NAME: what the log says about that setting: found (a NEW code), known
@@ -81,6 +82,7 @@ item_status() {
     /^## / {cur = tolower(substr($0, 4)); st_set = (cur == n); if (st_set) st = "known"; next}
     st_set && /NEW/ {st = "found"}
     st_set && /No readable/ {st = "none"}
+    st_set && /^CHECK:/ {st = "check"}
     st_set && /^Skipped/ {st = "skipped"}
     st_set && /^Not in this/ {st = "absent"}
     END {print st}' "$log" 2> /dev/null
@@ -95,6 +97,7 @@ show_todo() {
     case "$(item_status "$item")" in
       found) mark="   [done: found a NEW code, see the log]" ;;
       known) mark="   [done: only codes we already control]" ;;
+      check) mark="   [done: moved codes we use for other settings: worth checking]" ;;
       none) mark="   [done: no DDC code]" ;;
       skipped) mark="   [skipped]" ;;
       absent) mark="   [not in this monitor's menu]" ;;
@@ -120,7 +123,7 @@ summarize() {
                      END {for (i = 1; i <= n; i++) print order[i] "|" old[order[i]] "|" new[order[i]]}' \
   | while IFS='|' read -r c o w; do
       k=$(known_name "$c")
-      if [ -n "$k" ]; then printf '  %s: %s -> %s   (already controlled: %s)\n' "$c" "$o" "$w" "$k"
+      if [ -n "$k" ]; then printf '  %s: %s -> %s   (we already use it for: %s)\n' "$c" "$o" "$w" "$k"
       else printf '  %s: %s -> %s   <== NEW\n' "$c" "$o" "$w"; fi
     done
 }
@@ -230,6 +233,13 @@ run_timed() {
   cat "$out"; rm -f "$out"
 }
 
+# Everything that runs is inside main(), which the shell reads completely before
+# starting: editing this file while it is running cannot corrupt the run.
+main() {
+case "${1:-}" in
+  list) show_todo; exit 0 ;;
+esac
+
 if [ ! -s "$codes_file" ]; then
   echo "First run: finding which codes the monitor answers (all 256, about 20 s) ..."
   probe_codes
@@ -248,9 +258,6 @@ next_item() {
   return 1
 }
 
-case "${1:-}" in
-  list) show_todo; exit 0 ;;
-esac
 
 # which setting: the one given (a number from `list` or a name), else the next suggested
 if [ $# -gt 0 ]; then
@@ -298,11 +305,18 @@ if [ -n "$d" ]; then
   sum=$(summarize "$d")
   echo "Changed:"; echo "$sum"
   printf '```\n%s\n```\n' "$sum" >> "$log"
+  if ! echo "$sum" | grep -q 'NEW' && [ -z "$(looks_known "$name")" ]; then
+    # codes we use for other things moved when a different setting was changed: that is a
+    # finding too (a second meaning, or a side effect), not "nothing new"
+    note="CHECK: those codes are used for other settings, but you changed '$name'. They may also mean this one."
+    echo; echo "$note"
+    printf '%s\n' "$note" >> "$log"
+  fi
   newcode=$(echo "$sum" | awk '/<== NEW/ {sub(":", "", $1); print $1; exit}')
   if [ -n "$newcode" ]; then
     echo
-    echo "To control it, add a line like this to a controls file and import it in the app"
-    echo "(Options > Import controls file), or save it as \"\$(./monitor controls path)\":"
+    echo "To control it, put a line like this in a controls file and import it in the app"
+    echo "(Options > Import controls file), or save it as $(./monitor controls path 2> /dev/null):"
     echo "  name | $name | $newcode | choice | off=0 on=1        (use the values you saw above)"
   fi
 else
@@ -311,3 +325,7 @@ else
 fi
 echo "Logged in $log."
 if nxt=$(next_item); then echo "Run ./walk.sh again for the next one: $nxt"; else echo "That was the last one in the list."; fi
+}
+
+main "$@"
+exit $?

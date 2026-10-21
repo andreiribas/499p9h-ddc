@@ -88,6 +88,9 @@ PICTURE_CHOICES = [
         ("scaling", "Scaling", [("No scaling", "noscale"), ("Keep aspect ratio", "aspect"),
                                 ("Stretch to fill", "stretch")]),
     ]),
+    ("Energy", [
+        ("smartcontrast", "SmartContrast", [("Off", "off"), ("On", "on")]),
+    ]),
     ("On-screen menu", [
         ("osd", "Monitor's menu", [("Shown", "on"), ("Hidden (buttons still work)", "off")]),
         ("language", "Language", [
@@ -103,6 +106,10 @@ PICTURE_CHOICES = [
 ]
 # RGB gain: the monitor applies it with the "user" colour preset
 PICTURE_GAIN = [("gain-red", "Red"), ("gain-green", "Green"), ("gain-blue", "Blue")]
+# Settings the monitor itself warns about (turning them on can increase its energy
+# consumption): the app asks first, unless that is switched off in Options. Imported
+# controls get the same when their line in the controls file ends with "| energy".
+ENERGY_SETTINGS = {"smartcontrast": "SmartContrast"}
 # a slider sends its value this long after it stops moving
 SLIDER_DELAY_MS = 250
 
@@ -184,6 +191,7 @@ def load_state():
         "left": saved.get("left", this),
         "right": saved.get("right", "hdmi1" if this == "usbc" else "usbc"),
         "poll_seconds": saved.get("poll_seconds", DEFAULT_POLL_SECONDS),
+        "energy_warning": bool(saved.get("energy_warning", True)),
     }
     try:
         state["poll_seconds"] = max(0, min(300, int(state["poll_seconds"])))
@@ -217,6 +225,8 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.sending = set()  # picture settings with a command running
         self.loading_picture = False
         self.custom_rows = []  # (row, setting name) of the imported controls on the Picture page
+        self.energy_custom = {}  # imported setting -> (label, values that mean "off")
+        self.choice_prev = {}  # dropdown setting -> index it had before the user's change
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
@@ -361,12 +371,14 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.custom_group.remove(row)
                 self.scales.pop(name, None)
                 self.choice_rows.pop(name, None)
+                self.energy_custom.pop(name, None)
             self.custom_rows = []
             for line in (text.splitlines() if ok else []):
                 parts = [x.strip() for x in line.split("|")]
-                if len(parts) != 5:
+                if len(parts) not in (5, 6):
                     continue
-                name, label, _code, kind, values = parts
+                name, label, _code, kind, values = parts[:5]
+                energy = len(parts) == 6 and parts[5] == "energy"
                 if kind == "range" and values.isdigit():
                     row = self.slider_row(name, label, int(values))
                 elif kind == "choice":
@@ -375,6 +387,9 @@ class MonitorWindow(Adw.ApplicationWindow):
                     row = Adw.ComboRow(title=label, model=Gtk.StringList.new([n for n, _ in options]))
                     row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
                     self.choice_rows[name] = (row, options)
+                    if energy:  # "off" and whatever the file numbers 0 need no question
+                        zero = [v.split("=")[0] for v in values.split() if v.split("=")[1:] == ["0"]]
+                        self.energy_custom[name] = (label, ("off", *zero))
                 else:
                     continue
                 self.custom_group.add(row)
@@ -473,8 +488,57 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     def on_choice(self, name, row, options):
         self.update_gain_visibility()
-        if not self.picture_updating:
-            self.send_setting(name, options[row.get_selected()][1])
+        index = row.get_selected()
+        if self.picture_updating:  # set from the monitor, not by the user
+            self.choice_prev[name] = index
+            return
+        value = options[index][1]
+        text = self.energy_warning_for(name, value)
+        if text is None:
+            self.choice_prev[name] = index
+            self.send_setting(name, value)
+            return
+        prev = self.choice_prev.get(name, 0)
+
+        def answer(_alert, response):
+            if response == "continue":
+                self.choice_prev[name] = index
+                self.send_setting(name, value)
+            else:  # put the dropdown back; nothing is sent
+                GLib.idle_add(revert)
+
+        def revert():
+            self.picture_updating = True
+            row.set_selected(prev)
+            self.picture_updating = False
+            return False
+
+        alert = Adw.AlertDialog(heading="This can increase energy consumption", body=text)
+        alert.add_response("cancel", "Cancel")
+        alert.add_response("continue", "Turn on")
+        alert.set_default_response("cancel")
+        alert.set_close_response("cancel")
+        alert.connect("response", answer)
+        alert.present(self)
+
+    def energy_warning_for(self, name, value):
+        """The question to ask before turning on `name`, or None when no question is needed
+        (not an energy setting, switched off in Options, or the value means off)."""
+        if not self.state.get("energy_warning", True):
+            return None
+        if name in ENERGY_SETTINGS:
+            label, off_values = ENERGY_SETTINGS[name], ("off",)
+        elif name in self.energy_custom:
+            label, off_values = self.energy_custom[name]
+        else:
+            return None
+        if value in off_values:
+            return None
+        return f"{label} can increase the monitor's energy consumption. Turn it on anyway?"
+
+    def set_energy_warning(self, on):
+        self.state["energy_warning"] = bool(on)
+        save_state(self.state)
 
     def update_gain_visibility(self):
         row, options = self.choice_rows["preset"]
@@ -546,6 +610,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                     values = [v for _, v in options]
                     if value in values:
                         row.set_selected(values.index(value))
+                        self.choice_prev[name] = values.index(value)
             self.picture_updating = False
             if announce:
                 self.toast("Read from the monitor")
@@ -773,6 +838,17 @@ class MonitorWindow(Adw.ApplicationWindow):
             refresh_switches()
 
         conn.connect("notify::selected", on_connected)
+
+        energy = Adw.PreferencesGroup(title="Energy")
+        warn = Adw.SwitchRow(
+            title="Warn before changing energy settings",
+            subtitle="Ask first when turning on a setting that can increase the monitor's "
+            "energy consumption, like SmartContrast.",
+            active=self.state.get("energy_warning", True),
+        )
+        warn.connect("notify::active", lambda r, _p: self.set_energy_warning(r.get_active()))
+        energy.add(warn)
+        page.add(energy)
 
         extra = Adw.PreferencesGroup(
             title="Extra controls",

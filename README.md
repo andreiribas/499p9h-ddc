@@ -50,6 +50,8 @@ monitor mute|preset|gamma|mode [value]
 monitor get <setting> | set <setting> <value>
 monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain 0-100 (VCP 16/18/1A)
 monitor scaling noscale|aspect|stretch     (VCP 86)
+monitor smartcontrast on|off    (VCP F0, found with walk.sh on this monitor; its menu warns that "on"
+                                can increase the energy consumption. The command does not ask, the app does)
 monitor osd on|off              show / hide the monitor's own menu (VCP CA); `osd on` undoes it
 monitor language <name>         the monitor's menu language (VCP CC): english french german italian
                                 spanish portuguese ptbr dutch swedish finnish polish czech hungarian
@@ -73,6 +75,10 @@ Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as
 `monitor-gui.py` (GTK 4 + libadwaita, needs `python3-gi` and `gir1.2-adw-1`;
 installed as "Monitor Control"): a PBP switch, a source picker for one screen
 or a left and a right picker, Swap and Apply.
+Turning on a setting that can increase the monitor's energy consumption (SmartContrast, and
+imported controls marked `energy`) asks for confirmation first, like the monitor's own menu.
+Options > "Warn before changing energy settings" switches that off (it is on by default).
+
 A second page, **Picture**, has sliders for brightness, contrast, sharpness and volume,
 mute, and dropdowns for colour temperature, gamma and display mode, and, when the colour
 temperature is User, red/green/blue gain sliders. (Writing a gain makes the monitor
@@ -92,6 +98,9 @@ name | label | code | kind | values
 - `label`: what the app shows
 - `code`: the two hex digits of the VCP code
 - `kind`: `range` (values: the maximum, e.g. `100`) or `choice` (values: `name=number` pairs, e.g. `off=0 on=1`)
+- an optional sixth field, `energy`, for a choice that can increase the monitor's power use
+  (`night-mode | Night mode | 9A | choice | off=0 on=1 | energy`): the app then asks for
+  confirmation before turning it on, like it does for SmartContrast
 
 ```
 # the codes below are only an example: use the ones found for YOUR monitor
