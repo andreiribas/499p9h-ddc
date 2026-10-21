@@ -3,7 +3,7 @@
 # to set up first; walk.sh waits for it BEFORE reading the baseline, so that it is not
 # mistaken for the change. walk.sh shows these as a numbered
 # list, with what the log already says about each.
-Right window input (PBP) | PBP must be on: turn it on now (./monitor pbp on, or the app) and wait until both pictures show. Then you will change the RIGHT window's input in the monitor's menu.
+PBP Input | In the monitor's menu set PBP mode to PBP (or run ./monitor pbp on) and wait until both pictures show. Then you will change PBP Input (the right window's source), for example from USB-C to HDMI-1.
 SmartContrast
 Adaptive Sync
 SmartResponse (response time)

@@ -59,7 +59,7 @@ looks_known() {
     *"colour temp"* | *"color temp"* | *preset*) echo "monitor preset" ;;
     *gain*) echo "monitor gain-red|gain-green|gain-blue" ;; *scaling*) echo "monitor scaling" ;;
     *language*) echo "monitor language" ;; *swap*) echo "monitor swap" ;;
-    *pbp*"on"* | *"picture by picture"*) echo "monitor pbp" ;;
+    *pbp*"on"* | *"pbp mode"* | *"picture by picture"*) echo "monitor pbp" ;;
     *"display mode"* | *smartimage*) echo "monitor mode" ;;
   esac
 }
