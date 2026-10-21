@@ -77,11 +77,29 @@ PICTURE_RANGES = [
     ("sharpness", "Sharpness", 10),
 ]
 PICTURE_CHOICES = [
-    ("preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
-        ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
-    ("gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
-    ("mode", "Display mode", [(n, n.lower()) for n in
-        ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
+    ("Colour", [
+        ("preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
+            ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
+        ("gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
+        ("mode", "Display mode", [(n, n.lower()) for n in
+            ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
+    ]),
+    ("Screen", [
+        ("scaling", "Scaling", [("No scaling", "noscale"), ("Keep aspect ratio", "aspect"),
+                                ("Stretch to fill", "stretch")]),
+    ]),
+    ("On-screen menu", [
+        ("osd", "Monitor's menu", [("Shown", "on"), ("Hidden (buttons still work)", "off")]),
+        ("language", "Language", [
+            ("English", "english"), ("French", "french"), ("German", "german"),
+            ("Italian", "italian"), ("Spanish", "spanish"), ("Portuguese", "portuguese"),
+            ("Portuguese (Brazil)", "ptbr"), ("Dutch", "dutch"), ("Swedish", "swedish"),
+            ("Finnish", "finnish"), ("Polish", "polish"), ("Czech", "czech"),
+            ("Hungarian", "hungarian"), ("Greek", "greek"), ("Turkish", "turkish"),
+            ("Russian", "russian"), ("Ukrainian", "ukrainian"), ("Japanese", "japanese"),
+            ("Korean", "korean"), ("Chinese (simplified)", "schinese"),
+            ("Chinese (traditional)", "tchinese")]),
+    ]),
 ]
 # RGB gain: the monitor applies it with the "user" colour preset
 PICTURE_GAIN = [("gain-red", "Red"), ("gain-green", "Green"), ("gain-blue", "Blue")]
@@ -292,22 +310,23 @@ class MonitorWindow(Adw.ApplicationWindow):
             self.picture_group.add(self.slider_row(name, title, top))
         page.add(self.picture_group)
 
-        colour = Adw.PreferencesGroup(title="Colour")
         self.choice_rows = {}
-        for name, title, options in PICTURE_CHOICES:
-            row = Adw.ComboRow(title=title, model=Gtk.StringList.new([n for n, _ in options]))
-            row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
-            self.choice_rows[name] = (row, options)
-            colour.add(row)
-        page.add(colour)
-
-        self.gain_group = Adw.PreferencesGroup(
-            title="RGB gain", description="Used by the User colour temperature"
-        )
-        for name, title in PICTURE_GAIN:
-            self.gain_group.add(self.slider_row(name, title, 100))
-        self.gain_group.set_visible(False)
-        page.add(self.gain_group)
+        for group_title, choices in PICTURE_CHOICES:
+            group = Adw.PreferencesGroup(title=group_title)
+            for name, title, options in choices:
+                row = Adw.ComboRow(title=title, model=Gtk.StringList.new([n for n, _ in options]))
+                row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+                self.choice_rows[name] = (row, options)
+                group.add(row)
+            page.add(group)
+            if group_title == "Colour":  # the gain belongs right under the colour settings
+                self.gain_group = Adw.PreferencesGroup(
+                    title="RGB gain", description="Used by the User colour temperature"
+                )
+                for name, title in PICTURE_GAIN:
+                    self.gain_group.add(self.slider_row(name, title, 100))
+                self.gain_group.set_visible(False)
+                page.add(self.gain_group)
 
         audio = Adw.PreferencesGroup(title="Audio")
         audio.add(self.slider_row("volume", "Volume", 100))

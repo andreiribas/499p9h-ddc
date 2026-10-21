@@ -1,3 +1,4 @@
 __pycache__/
 # one-off experiment that turns PBP off; kept locally only
 pbp-experiment.sh
+snapshots/walk-[0-9]*.txt

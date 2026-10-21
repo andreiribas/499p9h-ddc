@@ -49,7 +49,15 @@ monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, v
 monitor mute|preset|gamma|mode [value]
 monitor get <setting> | set <setting> <value>
 monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain 0-100 (VCP 16/18/1A)
+monitor scaling noscale|aspect|stretch     (VCP 86)
+monitor osd on|off              show / hide the monitor's own menu (VCP CA); `osd on` undoes it
+monitor language <name>         the monitor's menu language (VCP CC): english french german italian
+                                spanish portuguese ptbr dutch swedish finnish polish czech hungarian
+                                greek turkish russian ukrainian japanese korean schinese tchinese
 ```
+
+To find more controls, `./walk.sh` is a guided, read-only search: you change one setting
+at a time with the monitor's buttons and it shows which codes changed (see `walk.sh`).
 
 Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
 volume (`62`) 0-100, sharpness (`87`) 0-10, `mute` on/off (`8D`), colour `preset`
