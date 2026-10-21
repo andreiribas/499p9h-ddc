@@ -15,6 +15,12 @@
 #   monitor layout <left> <right>   EXPERIMENTAL, unreliable: both windows (PBP on).
 #                           The right window is better set once in the monitor's
 #                           menu: the monitor remembers it.
+#   monitor picture         all picture settings, one "name value" per line
+#   monitor get <setting>   show one setting; monitor set <setting> <value> changes it
+#   monitor brightness [N|+N|-N]    show / set / adjust (also contrast sharpness volume)
+#   monitor mute|preset|gamma|mode [value]   mute: on off; preset: srgb 5000k 6500k 7500k
+#                           8200k 9300k 11500k user; gamma: 1.8 2.0 2.2 2.4 2.6;
+#                           mode: standard productivity mixed movie games
 set -u
 
 # Which monitor to talk to: the EDID model name ddcutil shows in `ddcutil detect`.
@@ -149,6 +155,122 @@ input_value() {
   esac
 }
 
+# ---- picture settings -----------------------------------------------------
+# Standard MCCS codes, listed in the monitor's capabilities (snapshots/capabilities.txt).
+# Ranges: brightness, contrast, volume 0-100, sharpness 0-10. Choices are named.
+SETTINGS="brightness contrast sharpness volume mute preset gamma mode"
+setting_code() {
+  case "$1" in
+    brightness) echo 10 ;; contrast) echo 12 ;; sharpness) echo 87 ;; volume) echo 62 ;;
+    mute) echo 8D ;; preset) echo 14 ;; gamma) echo 72 ;; mode) echo DC ;;
+  esac
+}
+range_max() { case "$1" in sharpness) echo 10 ;; *) echo 100 ;; esac; }
+# setting, name, VCP value (decimal). Gamma values are the monitor's presets
+# (0x50 .. 0xa0); mute is 1 = muted, 2 = not muted.
+CHOICES="mute on 1
+mute off 2
+preset srgb 1
+preset 5000k 4
+preset 6500k 5
+preset 7500k 6
+preset 8200k 7
+preset 9300k 8
+preset 11500k 10
+preset user 11
+gamma 1.8 80
+gamma 2.0 100
+gamma 2.2 120
+gamma 2.4 140
+gamma 2.6 160
+mode standard 0
+mode productivity 1
+mode mixed 2
+mode movie 3
+mode games 5"
+choice_num() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $2 == n {print $3}'; }
+choice_name() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $3 == n {print $2}'; }
+
+# vcp_query CODE... -> the "VCP ..." reply lines (several codes in one call: about
+# 0.4 s for all eight settings)
+vcp_query() {
+  out=""
+  if bus=$(find_bus); then
+    # shellcheck disable=SC2086
+    out=$(ddcutil --bus "$bus" $FAST_OPTS --brief getvcp "$@" 2>/dev/null)
+  fi
+  [ -n "$out" ] || out=$(ddc --brief getvcp "$@" 2>/dev/null)
+  printf '%s\n' "$out" | grep '^VCP ' || return 1
+}
+
+# setting_show SETTING "VCP line" -> "<value> <max>" for ranges, the name for choices
+setting_show() {
+  s=$1; shift
+  case "$3" in   # $1 VCP, $2 code, $3 kind: C = range (cur max), SNC / CNC = choice
+    C) cur=$4; max=$5 ;;
+    SNC) cur=$((0x${4#x})); max= ;;
+    CNC) cur=$((0x${7#x})); max= ;;
+    *) echo "n/a"; return 1 ;;
+  esac
+  case "$s" in
+    brightness|contrast|sharpness|volume) echo "$cur $max" ;;
+    *) n=$(choice_name "$s" "$cur"); echo "${n:-$cur}" ;;
+  esac
+}
+
+get_setting() {
+  code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
+  line=$(vcp_query "$code") || die "$NO_LINK"
+  # shellcheck disable=SC2086
+  v=$(setting_show "$1" $line) || die "the monitor does not report $1"
+  echo "${v% *}" | awk '{print $1}'
+}
+
+set_setting() {
+  code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
+  val=${2:-}; [ -n "$val" ] || die "usage: monitor set $1 <value>"
+  case "$1" in
+    brightness|contrast|sharpness|volume)
+      max=$(range_max "$1")
+      case "$val" in
+        [+-][0-9]*)   # relative: needs the current value
+          d=${val#[+-]}
+          case "$d" in *[!0-9]*) die "not a number: $val" ;; esac
+          cur=$(get_setting "$1") || exit 1
+          if [ "${val%"$d"}" = + ]; then n=$((cur + d)); else n=$((cur - d)); fi
+          [ "$n" -le "$max" ] || n=$max
+          [ "$n" -ge 0 ] || n=0 ;;
+        *[!0-9]* | "") die "$1 takes a number 0-$max, or +N / -N" ;;
+        *) n=$val; [ "$n" -le "$max" ] || die "$1 is 0-$max" ;;
+      esac ;;
+    *)
+      val=$(echo "$val" | tr 'A-Z' 'a-z')
+      n=$(choice_num "$1" "$val")
+      [ -n "$n" ] || die "$1: '$val' is not one of: $(echo "$CHOICES" | awk -v f="$1" '$1 == f {printf "%s ", $2}')" ;;
+  esac
+  ddc_set "$code" "$n" || die "could not set $1: $NO_LINK"
+  case "$1" in
+    brightness|contrast|sharpness|volume) echo "$1 $n" ;;
+    *) echo "$1 $val" ;;
+  esac
+}
+
+# picture: every setting in one read, "name value" per line (ranges: "name cur max")
+show_picture() {
+  codes=""; for s in $SETTINGS; do codes="$codes $(setting_code "$s")"; done
+  # shellcheck disable=SC2086
+  lines=$(vcp_query $codes) || die "$NO_LINK"
+  for s in $SETTINGS; do
+    code=$(setting_code "$s")
+    line=$(echo "$lines" | awk -v c="$code" '$2 == c {print; exit}')
+    if [ -n "$line" ]; then
+      # shellcheck disable=SC2086
+      echo "$s $(setting_show "$s" $line)"
+    else
+      echo "$s n/a"
+    fi
+  done
+}
 
 # Pause between the steps of a layout change: the monitor must have taken the
 # previous step before the next one. MONITOR_LAYOUT_PAUSE overrides it.
@@ -252,8 +374,20 @@ case "${1:-}" in
   layout)
     set_layout "${2:-}" "${3:-}"
     ;;
+  picture)
+    show_picture
+    ;;
+  get)
+    get_setting "${2:-}"
+    ;;
+  set)
+    set_setting "${2:-}" "${3:-}"
+    ;;
+  brightness | contrast | sharpness | volume | mute | preset | gamma | mode)
+    if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
+    ;;
   *)
-    sed -n '7,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,22p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

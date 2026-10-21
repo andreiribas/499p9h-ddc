@@ -44,7 +44,17 @@ monitor swap                    swap the left and right windows (PBP only)
 monitor input <source>          input of the screen (PBP off) / left window (PBP on)
 monitor left <source>           same as input
 monitor layout <left> <right>   EXPERIMENTAL, unreliable: set both windows (PBP on)
+monitor picture                 all picture settings, one per line
+monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, volume)
+monitor mute|preset|gamma|mode [value]
+monitor get <setting> | set <setting> <value>
 ```
+
+Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
+volume (`62`) 0-100, sharpness (`87`) 0-10, `mute` on/off (`8D`), colour `preset`
+(`14`: srgb 5000k 6500k 7500k 8200k 9300k 11500k user), `gamma` (`72`: 1.8 2.0 2.2
+2.4 2.6) and `mode` (`DC`: standard productivity mixed movie games). The names of the
+`mode` values come from the monitor's capability list and are not checked against its menu.
 
 Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as in the monitor's own menu. Over DDC the monitor numbers them differently: its USB-C port is "DisplayPort-1" (`dp1`), the DisplayPort connector is "DisplayPort-2" (`dp2`), and menu "HDMI 1" / "HDMI 2" are DDC values 0x12 / 0x11 (checked on one monitor by plugging a laptop in and switching to each value). A GNOME shortcut works well for
 `monitor swap`.
@@ -54,6 +64,9 @@ Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as
 `monitor-gui.py` (GTK 4 + libadwaita, needs `python3-gi` and `gir1.2-adw-1`;
 installed as "Monitor Control"): a PBP switch, a source picker for one screen
 or a left and a right picker, Swap and Apply.
+A second page, **Picture**, has sliders for brightness, contrast, sharpness and volume,
+mute, and dropdowns for colour temperature, gamma and display mode. It reads the
+values from the monitor and follows changes made with the monitor's buttons.
 
 ## What works, and what doesn't
 

@@ -69,6 +69,23 @@ SETTLE_SECONDS = 20
 NO_LINK_SUBTITLE = "Not answering: the monitor is probably showing another input"
 
 
+# Picture page: (setting the `monitor` script knows, label, maximum) for the sliders,
+# and (setting, label, [(label shown, value the script takes)]) for the dropdowns.
+PICTURE_RANGES = [
+    ("brightness", "Brightness", 100),
+    ("contrast", "Contrast", 100),
+    ("sharpness", "Sharpness", 10),
+]
+PICTURE_CHOICES = [
+    ("preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
+        ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
+    ("gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
+    ("mode", "Display mode", [(n, n.lower()) for n in
+        ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
+]
+# a slider sends its value this long after it stops moving
+SLIDER_DELAY_MS = 250
+
 # The monitor handles one DDC command at a time: a background check must not
 # overlap with a button press.
 _monitor_lock = threading.Lock()
@@ -175,11 +192,15 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.polling = False  # a background check is running
         self.poll_source = None  # id of the repeating background-check timer
         self.last_apply = 0.0  # time.monotonic() of the last command that changed the monitor
+        self.debounce = {}  # picture setting -> timer id, while a slider waits to send
+        self.pending = {}  # picture setting -> newest value not sent yet
+        self.sending = set()  # picture settings with a command running
+        self.loading_picture = False
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Read PBP state from the monitor")
-        refresh.connect("clicked", lambda _b: self.read_status(announce=True))
+        refresh.connect("clicked", lambda _b: self.refresh(announce=True))
         header.pack_start(refresh)
         menu = Gio.Menu()
         menu.append("Options", "win.options")
@@ -239,7 +260,14 @@ class MonitorWindow(Adw.ApplicationWindow):
         page.add(note)
 
         self.content = page
-        self.toasts = Adw.ToastOverlay(child=page)
+        self.stack = Adw.ViewStack()
+        self.stack.add_titled_with_icon(page, "input", "Input", "video-display-symbolic")
+        self.stack.add_titled_with_icon(
+            self.build_picture_page(), "picture", "Picture", "preferences-desktop-appearance-symbolic"
+        )
+        self.stack.connect("notify::visible-child", lambda *_a: self.on_page_changed())
+        header.set_title_widget(Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
+        self.toasts = Adw.ToastOverlay(child=self.stack)
         view = Adw.ToolbarView(content=self.toasts)
         view.add_top_bar(header)
         self.set_content(view)
@@ -251,6 +279,152 @@ class MonitorWindow(Adw.ApplicationWindow):
         # checking: periodically, and whenever this window gets focus again.
         self.arm_poll()
         self.connect("notify::is-active", lambda w, _p: w.is_active() and w.poll_status())
+
+    # ---- picture page ----------------------------------------------------
+
+    def build_picture_page(self):
+        page = Adw.PreferencesPage()
+        self.picture_group = Adw.PreferencesGroup(title="Picture")
+        self.scales = {}
+        for name, title, top in PICTURE_RANGES:
+            self.picture_group.add(self.slider_row(name, title, top))
+        page.add(self.picture_group)
+
+        colour = Adw.PreferencesGroup(title="Colour")
+        self.choice_rows = {}
+        for name, title, options in PICTURE_CHOICES:
+            row = Adw.ComboRow(title=title, model=Gtk.StringList.new([n for n, _ in options]))
+            row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+            self.choice_rows[name] = (row, options)
+            colour.add(row)
+        page.add(colour)
+
+        audio = Adw.PreferencesGroup(title="Audio")
+        audio.add(self.slider_row("volume", "Volume", 100))
+        self.mute_row = Adw.SwitchRow(title="Mute")
+        self.mute_row.connect(
+            "notify::active",
+            lambda r, _p: self.picture_updating or self.send_setting("mute", "on" if r.get_active() else "off"),
+        )
+        audio.add(self.mute_row)
+        page.add(audio)
+        return page
+
+    picture_updating = False  # True while the widgets are being set from the monitor
+
+    def slider_row(self, name, title, top):
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, top, 1)
+        scale.set_draw_value(True)
+        scale.set_value_pos(Gtk.PositionType.RIGHT)
+        scale.set_digits(0)
+        scale.set_size_request(220, -1)
+        scale.set_valign(Gtk.Align.CENTER)
+        scale.connect("value-changed", lambda sc, n=name: self.on_slider(n, sc))
+        row = Adw.ActionRow(title=title)
+        row.add_suffix(scale)
+        self.scales[name] = scale
+        return row
+
+    def on_slider(self, name, scale):
+        if self.picture_updating:
+            return
+        if name in self.debounce:
+            GLib.source_remove(self.debounce[name])
+        value = int(scale.get_value())
+
+        def fire():
+            del self.debounce[name]
+            self.send_setting(name, value)
+            return False
+
+        self.debounce[name] = GLib.timeout_add(SLIDER_DELAY_MS, fire)
+
+    def on_choice(self, name, row, options):
+        if not self.picture_updating:
+            self.send_setting(name, options[row.get_selected()][1])
+
+    def send_setting(self, name, value):
+        """Send `monitor set <name> <value>` in the background. A newer value that
+        arrives while one is being sent replaces any older waiting one."""
+        self.pending[name] = value
+        if name not in self.sending:
+            self.sending.add(name)
+            self.flush_setting(name)
+
+    def flush_setting(self, name):
+        value = self.pending.pop(name)
+
+        def work():
+            ok, text = run_monitor("set", name, str(value))
+            GLib.idle_add(finish, ok, text)
+
+        def finish(ok, text):
+            self.last_apply = time.monotonic()
+            if not ok:
+                self.pending.pop(name, None)
+                self.sending.discard(name)
+                self.toast(text or "The monitor did not respond")
+                self.load_picture()  # show what the monitor really has
+            elif name in self.pending:
+                self.flush_setting(name)
+            else:
+                self.sending.discard(name)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def load_picture(self, announce=False):
+        """Read all picture settings from the monitor into the page. Skipped while
+        the user is changing one, so a slow read never moves a slider back."""
+        if self.loading_picture or self.debounce or self.pending or self.sending:
+            return
+        self.loading_picture = True
+
+        def work():
+            ok, text = run_monitor("picture")
+            GLib.idle_add(finish, ok, text)
+
+        def finish(ok, text):
+            self.loading_picture = False
+            if self.debounce or self.pending or self.sending:
+                return False  # the user moved something meanwhile: it wins
+            if not ok:
+                self.picture_group.set_description(NO_LINK_SUBTITLE)
+                if announce:
+                    self.toast(text or "The monitor did not answer")
+                return False
+            self.picture_group.set_description("")
+            self.picture_updating = True
+            for line in text.splitlines():
+                parts = line.split()
+                if len(parts) < 2 or parts[1] == "n/a":
+                    continue
+                name, value = parts[0], parts[1]
+                if name in self.scales and value.isdigit():
+                    self.scales[name].set_value(int(value))
+                elif name == "mute":
+                    self.mute_row.set_active(value == "on")
+                elif name in self.choice_rows:
+                    row, options = self.choice_rows[name]
+                    values = [v for _, v in options]
+                    if value in values:
+                        row.set_selected(values.index(value))
+            self.picture_updating = False
+            if announce:
+                self.toast("Read from the monitor")
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_page_changed(self):
+        if self.stack.get_visible_child_name() == "picture":
+            self.load_picture()
+
+    def refresh(self, announce=False):
+        if self.stack.get_visible_child_name() == "picture":
+            self.load_picture(announce=announce)
+        else:
+            self.read_status(announce=announce)
 
     # ---- building blocks -------------------------------------------------
 
@@ -490,6 +664,8 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.infer_source(False)
             else:
                 self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
+            if ok and self.stack.get_visible_child_name() == "picture":
+                self.load_picture()  # settings changed with the monitor's buttons
             return False
 
         threading.Thread(target=work, daemon=True).start()
