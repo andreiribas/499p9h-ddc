@@ -21,6 +21,7 @@
 #   monitor mute|preset|gamma|mode [value]   mute: on off; preset: srgb 5000k 6500k 7500k
 #                           8200k 9300k 11500k user; gamma: 1.8 2.0 2.2 2.4 2.6;
 #                           mode: standard productivity mixed movie games
+#   monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain, 0-100 (preset "user")
 set -u
 
 # Which monitor to talk to: the EDID model name ddcutil shows in `ddcutil detect`.
@@ -157,12 +158,14 @@ input_value() {
 
 # ---- picture settings -----------------------------------------------------
 # Standard MCCS codes, listed in the monitor's capabilities (snapshots/capabilities.txt).
-# Ranges: brightness, contrast, volume 0-100, sharpness 0-10. Choices are named.
-SETTINGS="brightness contrast sharpness volume mute preset gamma mode"
+# Ranges: brightness, contrast, volume, RGB gain 0-100, sharpness 0-10. The gain only
+# shows when the colour preset is "user". Choices are named.
+SETTINGS="brightness contrast sharpness volume mute preset gamma mode gain-red gain-green gain-blue"
 setting_code() {
   case "$1" in
     brightness) echo 10 ;; contrast) echo 12 ;; sharpness) echo 87 ;; volume) echo 62 ;;
     mute) echo 8D ;; preset) echo 14 ;; gamma) echo 72 ;; mode) echo DC ;;
+    gain-red) echo 16 ;; gain-green) echo 18 ;; gain-blue) echo 1A ;;
   esac
 }
 range_max() { case "$1" in sharpness) echo 10 ;; *) echo 100 ;; esac; }
@@ -213,7 +216,7 @@ setting_show() {
     *) echo "n/a"; return 1 ;;
   esac
   case "$s" in
-    brightness|contrast|sharpness|volume) echo "$cur $max" ;;
+    brightness|contrast|sharpness|volume|gain-*) echo "$cur $max" ;;
     *) n=$(choice_name "$s" "$cur"); echo "${n:-$cur}" ;;
   esac
 }
@@ -230,7 +233,7 @@ set_setting() {
   code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
   val=${2:-}; [ -n "$val" ] || die "usage: monitor set $1 <value>"
   case "$1" in
-    brightness|contrast|sharpness|volume)
+    brightness|contrast|sharpness|volume|gain-*)
       max=$(range_max "$1")
       case "$val" in
         [+-][0-9]*)   # relative: needs the current value
@@ -250,7 +253,7 @@ set_setting() {
   esac
   ddc_set "$code" "$n" || die "could not set $1: $NO_LINK"
   case "$1" in
-    brightness|contrast|sharpness|volume) echo "$1 $n" ;;
+    brightness|contrast|sharpness|volume|gain-*) echo "$1 $n" ;;
     *) echo "$1 $val" ;;
   esac
 }
@@ -383,11 +386,11 @@ case "${1:-}" in
   set)
     set_setting "${2:-}" "${3:-}"
     ;;
-  brightness | contrast | sharpness | volume | mute | preset | gamma | mode)
+  brightness | contrast | sharpness | volume | mute | preset | gamma | mode | gain-red | gain-green | gain-blue)
     if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
     ;;
   *)
-    sed -n '7,22p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '7,24p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

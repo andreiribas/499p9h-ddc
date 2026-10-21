@@ -83,6 +83,8 @@ PICTURE_CHOICES = [
     ("mode", "Display mode", [(n, n.lower()) for n in
         ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
 ]
+# RGB gain: the monitor applies it with the "user" colour preset
+PICTURE_GAIN = [("gain-red", "Red"), ("gain-green", "Green"), ("gain-blue", "Blue")]
 # a slider sends its value this long after it stops moving
 SLIDER_DELAY_MS = 250
 
@@ -299,6 +301,14 @@ class MonitorWindow(Adw.ApplicationWindow):
             colour.add(row)
         page.add(colour)
 
+        self.gain_group = Adw.PreferencesGroup(
+            title="RGB gain", description="Used by the User colour temperature"
+        )
+        for name, title in PICTURE_GAIN:
+            self.gain_group.add(self.slider_row(name, title, 100))
+        self.gain_group.set_visible(False)
+        page.add(self.gain_group)
+
         audio = Adw.PreferencesGroup(title="Audio")
         audio.add(self.slider_row("volume", "Volume", 100))
         self.mute_row = Adw.SwitchRow(title="Mute")
@@ -340,8 +350,13 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.debounce[name] = GLib.timeout_add(SLIDER_DELAY_MS, fire)
 
     def on_choice(self, name, row, options):
+        self.update_gain_visibility()
         if not self.picture_updating:
             self.send_setting(name, options[row.get_selected()][1])
+
+    def update_gain_visibility(self):
+        row, options = self.choice_rows["preset"]
+        self.gain_group.set_visible(options[row.get_selected()][1] == "user")
 
     def send_setting(self, name, value):
         """Send `monitor set <name> <value>` in the background. A newer value that

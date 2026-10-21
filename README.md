@@ -48,6 +48,7 @@ monitor picture                 all picture settings, one per line
 monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, volume)
 monitor mute|preset|gamma|mode [value]
 monitor get <setting> | set <setting> <value>
+monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain 0-100 (VCP 16/18/1A)
 ```
 
 Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
@@ -65,7 +66,9 @@ Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as
 installed as "Monitor Control"): a PBP switch, a source picker for one screen
 or a left and a right picker, Swap and Apply.
 A second page, **Picture**, has sliders for brightness, contrast, sharpness and volume,
-mute, and dropdowns for colour temperature, gamma and display mode. It reads the
+mute, and dropdowns for colour temperature, gamma and display mode, and, when the colour
+temperature is User, red/green/blue gain sliders. (Writing a gain makes the monitor
+switch to the User preset by itself.) It reads the
 values from the monitor and follows changes made with the monitor's buttons.
 
 ## What works, and what doesn't
