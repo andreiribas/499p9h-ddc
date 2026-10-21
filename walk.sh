@@ -65,7 +65,14 @@ looks_known() {
 }
 
 # todo_items: the names in $todo_file, in order (numbers in the list refer to these)
-todo_items() { grep -v -e '^#' -e '^$' "$todo_file" 2> /dev/null; }
+# A line is "Name" or "Name | what to set up first" (see todo_setup).
+todo_items() { grep -v -e '^#' -e '^$' "$todo_file" 2> /dev/null | sed 's/[[:space:]]*|.*$//'; }
+# todo_setup NAME: what must be in place BEFORE the baseline is read (so that doing it
+# does not show up as a change), empty if nothing
+todo_setup() {
+  grep -v -e '^#' -e '^$' "$todo_file" 2> /dev/null | awk -F'|' -v n="$(echo "$1" | tr 'A-Z' 'a-z')" '
+    { name = $1; gsub(/^[ \t]+|[ \t]+$/, "", name); if (tolower(name) == n) { sub(/^[^|]*\|[ \t]*/, ""); print; exit } }'
+}
 
 # item_status NAME: what the log says about that setting: found (a NEW code), known
 # (only codes we already control), none (no code changed), or empty (not walked yet)
@@ -263,15 +270,27 @@ if [ -n "$known" ]; then
   case "$yn" in y | Y) ;; *) exit 0 ;; esac
 fi
 
-run_timed "Read the monitor" fast_scan > "snapshots/walk-00.txt"
+# s / x answers end the run, with a note in the log
+answer_special() {
+  case "$1" in
+    s | S) printf '\n## %s\n_%s_\nSkipped.\n' "$name" "$(date +%F)" >> "$log"; echo "Skipped. Run ./walk.sh again for another."; exit 0 ;;
+    x | X) printf '\n## %s\n_%s_\nNot in this monitor'"'"'s menu.\n' "$name" "$(date +%F)" >> "$log"; echo "Noted. Run ./walk.sh again for another."; exit 0 ;;
+  esac
+}
+
 printf '\n=== Next setting to look for:  %s\n' "$name"
-printf 'Change it on the monitor with its buttons, then press Enter here.\n'
+setup=$(todo_setup "$name")
+if [ -n "$setup" ]; then
+  # Get the monitor into the right state first, so that doing it is not read as the change.
+  printf '\nFirst, set this up (nothing else yet):\n  %s\nPress Enter when it is ready (s + Enter: skip it for now;  x + Enter: this monitor has no such setting) ' "$setup"
+  read -r answer
+  answer_special "$answer"
+fi
+run_timed "Read the monitor" fast_scan > "snapshots/walk-00.txt"
+printf '\nNow change it on the monitor with its buttons, then press Enter here.\n'
 printf '(s + Enter: skip it for now;  x + Enter: this monitor has no such setting) '
 read -r answer
-case "$answer" in
-  s | S) printf '\n## %s\n_%s_\nSkipped.\n' "$name" "$(date +%F)" >> "$log"; echo "Skipped. Run ./walk.sh again for another."; exit 0 ;;
-  x | X) printf '\n## %s\n_%s_\nNot in this monitor'"'"'s menu.\n' "$name" "$(date +%F)" >> "$log"; echo "Noted. Run ./walk.sh again for another."; exit 0 ;;
-esac
+answer_special "$answer"
 run_timed "Read the monitor" fast_scan > "snapshots/walk-01.txt"
 d=$(./diffscan.sh walk-00 walk-01 | grep -vE '^[<>] (AC|AE|20):')
 printf '\n## %s\n_%s_\n' "$name" "$(date +%F)" >> "$log"
