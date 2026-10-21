@@ -6,7 +6,9 @@
 PBP Input | In the monitor's menu set PBP mode to PBP (or run ./monitor pbp on) and wait until both pictures show. Then you will change PBP Input (the right window's source), for example from USB-C to HDMI-1.
 SmartContrast
 Adaptive Sync
-SmartResponse
+SmartResponse | Check that SmartResponse is Off (it is the current value) and do not change it yet. In step 3 you will change it from Off to Fast.
+SmartResponse: Fast to Faster | Set SmartResponse to Fast now (it is Off). Then in step 3 change it from Fast to Faster.
+SmartResponse: Faster to Fastest | Set SmartResponse to Faster now. Then in step 3 change it from Faster to Fastest.
 Pixel orbiting
 Power LED
 Power sensor

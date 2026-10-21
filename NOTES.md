@@ -121,6 +121,9 @@ command.
 - **F0 = SmartContrast** (0 = off, 1 = on). Found by turning SmartContrast on in the
   monitor's menu: only F0 changed (0 -> 1). The menu asks for a confirmation first (it can
   increase the energy consumption); the app asks as well.
+- **EB = SmartResponse**: 0 Off, 1 Fast, 2 Faster, 3 Fastest (one walk.sh round per step: only
+  EB changed each time). The read reports a maximum of 1, which is wrong: the capability list
+  gives EB the values 00-03.
 - **PBP Input** (the menu's name for the right window's source): one round showed code `60`
   moving (0x10 -> 0x11). `60` is what sets the LEFT window, and reading it has been
   unreliable, so this may mean that reading `60` follows the right window. Not settled: PBP

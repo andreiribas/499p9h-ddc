@@ -87,6 +87,8 @@ PICTURE_CHOICES = [
     ("Screen", [
         ("scaling", "Scaling", [("No scaling", "noscale"), ("Keep aspect ratio", "aspect"),
                                 ("Stretch to fill", "stretch")]),
+        ("smartresponse", "SmartResponse", [("Off", "off"), ("Fast", "fast"),
+                                            ("Faster", "faster"), ("Fastest", "fastest")]),
     ]),
     ("Energy", [
         ("smartcontrast", "SmartContrast", [("Off", "off"), ("On", "on")]),

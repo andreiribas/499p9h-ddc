@@ -23,6 +23,7 @@
 #                           mode: standard productivity mixed movie games
 #   monitor scaling noscale|aspect|stretch   how a smaller picture fills the screen
 #   monitor smartcontrast on|off    (found with walk.sh; the monitor warns that "on" can use more power)
+#   monitor smartresponse off|fast|faster|fastest   (found with walk.sh: pixel response time)
 #   monitor osd on|off      show the monitor's menu or not (the buttons still work; `osd on` brings it back)
 #   monitor language <name> english french german ... (see the README)
 #   monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain, 0-100 (preset "user")
@@ -168,13 +169,13 @@ input_value() {
 # Standard MCCS codes, listed in the monitor's capabilities (snapshots/capabilities.txt).
 # Ranges: brightness, contrast, volume, RGB gain 0-100, sharpness 0-10. The gain only
 # shows when the colour preset is "user". Choices are named.
-SETTINGS="brightness contrast sharpness volume mute preset gamma mode scaling osd language smartcontrast gain-red gain-green gain-blue"
+SETTINGS="brightness contrast sharpness volume mute preset gamma mode scaling osd language smartcontrast smartresponse gain-red gain-green gain-blue"
 setting_code() {
   case "$1" in
     brightness) echo 10 ;; contrast) echo 12 ;; sharpness) echo 87 ;; volume) echo 62 ;;
     mute) echo 8D ;; preset) echo 14 ;; gamma) echo 72 ;; mode) echo DC ;;
     scaling) echo 86 ;; osd) echo CA ;; language) echo CC ;;
-    smartcontrast) echo F0 ;;
+    smartcontrast) echo F0 ;; smartresponse) echo EB ;;
     gain-red) echo 16 ;; gain-green) echo 18 ;; gain-blue) echo 1A ;;
     *) custom_field "$1" 3 ;;
   esac
@@ -215,6 +216,10 @@ mode movie 3
 mode games 5
 smartcontrast off 0
 smartcontrast on 1
+smartresponse off 0
+smartresponse fast 1
+smartresponse faster 2
+smartresponse fastest 3
 scaling noscale 1
 scaling aspect 2
 scaling stretch 8
@@ -256,7 +261,7 @@ CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/controls.txt"
 BUILTIN_NAMES="$SETTINGS status doctor pbp swap input left layout picture get set profile controls"
 # Codes an imported control may not use: resets, power, save/keys, and what the
 # built-in controls already use.
-DENIED_CODES="02 04 05 06 08 0A B0 C6 D6 60 A5 F6 10 12 14 16 18 1A 62 72 86 87 8D CA CC DC F0"
+DENIED_CODES="02 04 05 06 08 0A B0 C6 D6 60 A5 F6 10 12 14 16 18 1A 62 72 86 87 8D CA CC DC F0 EB"
 
 # custom_defs FILE: the entries, trimmed, as name|label|CODE|kind|values
 custom_defs() {
@@ -449,7 +454,7 @@ show_picture() {
 PROFILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/profiles"
 # The order matters: PBP and inputs first (the monitor re-syncs for a few seconds),
 # then gain before preset (writing a gain makes the monitor switch to "user").
-PROFILE_ORDER="pbp input left gain-red gain-green gain-blue preset gamma mode smartcontrast brightness contrast sharpness volume mute"
+PROFILE_ORDER="pbp input left gain-red gain-green gain-blue preset gamma mode smartcontrast smartresponse brightness contrast sharpness volume mute"
 
 profile_file() {
   case "$1" in "" | *[!A-Za-z0-9_-]*) die "a profile name uses letters, digits, - and _" ;; esac
@@ -623,7 +628,7 @@ case "${1:-}" in
   set)
     set_setting "${2:-}" "${3:-}"
     ;;
-  brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | smartcontrast | gain-red | gain-green | gain-blue)
+  brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | smartcontrast | smartresponse | gain-red | gain-green | gain-blue)
     if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
     ;;
   controls)

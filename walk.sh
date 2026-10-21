@@ -36,7 +36,7 @@ if [ -r "$cache" ]; then target="--bus $(cat "$cache")"; else target="--model '$
 # The codes the `monitor` command already controls, to tell them from new finds.
 known_name() {
   case "$1" in
-    F0) echo "monitor smartcontrast" ;; 10) echo "monitor brightness" ;; 12) echo "monitor contrast" ;; 14) echo "monitor preset" ;;
+    F0) echo "monitor smartcontrast" ;; EB) echo "monitor smartresponse" ;; 10) echo "monitor brightness" ;; 12) echo "monitor contrast" ;; 14) echo "monitor preset" ;;
     16 | 18 | 1A) echo "monitor gain-red|green|blue" ;; 60) echo "monitor input: sets the LEFT window; reading it is unreliable" ;;
     62) echo "monitor volume" ;; 72) echo "monitor gamma" ;; 86) echo "monitor scaling" ;;
     87) echo "monitor sharpness" ;; 8D) echo "monitor mute" ;; A5) echo "monitor pbp" ;;
@@ -51,7 +51,11 @@ KNOWN_LIST="brightness, contrast, sharpness, volume, mute, colour temperature, g
 # The monitor command for a setting name that is already controlled (empty if not).
 looks_known() {
   l=$(echo "$1" | tr 'A-Z' 'a-z')
-  case "$l" in *smartcontrast*) echo "monitor smartcontrast"; return 0 ;; *smart*) return 0 ;; esac
+  case "$l" in
+    *smartcontrast*) echo "monitor smartcontrast"; return 0 ;;
+    *smartresponse*) echo "monitor smartresponse"; return 0 ;;
+    *smart*) return 0 ;;
+  esac
   case "$l" in
     *brightness*) echo "monitor brightness" ;; *contrast*) echo "monitor contrast" ;;
     *sharpness*) echo "monitor sharpness" ;; *volume*) echo "monitor volume" ;;
