@@ -107,10 +107,15 @@ show_todo() {
   done
 }
 
-# resolve_name "<what was typed>": a number picks that item of the list, anything else is a name
+# resolve_name "<what was typed>": a number picks that item of the list; text that is the
+# start of one item's name (any case) picks that item; anything else is taken as a new name
 resolve_name() {
   case "$1" in
-    "" | *[!0-9]*) echo "$1" ;;
+    "") echo "" ;;
+    *[!0-9]*)
+      want=$(echo "$1" | tr 'A-Z' 'a-z')
+      hit=$(todo_items | awk -v w="$want" 'index(tolower($0), w) == 1 {print; n++} END {if (n != 1) exit 1}') \
+        && echo "$hit" || echo "$1" ;;
     *) todo_items | sed -n "${1}p" ;;
   esac
 }

@@ -6,7 +6,7 @@
 PBP Input | In the monitor's menu set PBP mode to PBP (or run ./monitor pbp on) and wait until both pictures show. Then you will change PBP Input (the right window's source), for example from USB-C to HDMI-1.
 SmartContrast
 Adaptive Sync
-SmartResponse (response time)
+SmartResponse
 Pixel orbiting
 Power LED
 Power sensor
