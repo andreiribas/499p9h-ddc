@@ -287,18 +287,31 @@ answer_special() {
 
 printf '\n=== Next setting to look for:  %s\n' "$name"
 setup=$(todo_setup "$name")
+# Three steps, and Enter is only needed where it says so. Step 1 comes first so that the
+# monitor is read in the state you want to compare against, not while you are already
+# changing something.
+echo
+echo "Step 1 of 3: get ready. Do NOT change $name yet."
 if [ -n "$setup" ]; then
-  # Get the monitor into the right state first, so that doing it is not read as the change.
-  printf '\nFirst, set this up (nothing else yet):\n  %s\nPress Enter when it is ready (s + Enter: skip it for now;  x + Enter: this monitor has no such setting) ' "$setup"
-  read -r answer
-  answer_special "$answer"
+  echo "  Set this up first (anything you change now is not counted as the change):"
+  echo "  $setup"
+else
+  echo "  Nothing to set up: leave the monitor exactly as it is."
 fi
-run_timed "Read the monitor" fast_scan > "snapshots/walk-00.txt"
-printf '\nNow change it on the monitor with its buttons, then press Enter here.\n'
-printf '(s + Enter: skip it for now;  x + Enter: this monitor has no such setting) '
+printf '  Press Enter when ready, and the script reads the monitor.  (s + Enter: skip this setting for now;  x + Enter: this monitor has no such setting) '
 read -r answer
 answer_special "$answer"
-run_timed "Read the monitor" fast_scan > "snapshots/walk-01.txt"
+echo
+echo "Step 2 of 3: reading the monitor before your change (automatic, a few seconds)."
+run_timed "Read the monitor before your change" fast_scan > "snapshots/walk-00.txt"
+echo
+echo "Step 3 of 3: now change $name on the monitor with its buttons."
+printf '  Press Enter here only AFTER you have changed it.  (s + Enter: skip;  x + Enter: no such setting) '
+read -r answer
+answer_special "$answer"
+echo
+echo "Reading the monitor after your change (automatic)."
+run_timed "Read the monitor after your change" fast_scan > "snapshots/walk-01.txt"
 d=$(./diffscan.sh walk-00 walk-01 | grep -vE '^[<>] (AC|AE|20):')
 printf '\n## %s\n_%s_\n' "$name" "$(date +%F)" >> "$log"
 if [ -n "$d" ]; then
