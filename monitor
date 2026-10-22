@@ -24,6 +24,7 @@
 #   monitor scaling widescreen|4:3|1:1   the menu's Picture Format (16:9 is only shown, see README)
 #   monitor smartcontrast on|off    (found with walk.sh; the monitor warns that "on" can use more power)
 #   monitor smartresponse off|fast|faster|fastest   (found with walk.sh: pixel response time)
+#   monitor lowblue off|2|3    the menu's LowBlue Mode (levels 1 and 4 can be read but only chosen in the menu)
 #   monitor osd on|off      show the monitor's menu or not (the buttons still work; `osd on` brings it back)
 #   monitor language <name> english french german ... (see the README)
 #   monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain, 0-100 (preset "user")
@@ -274,7 +275,7 @@ choice_name() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $3 == n {p
 # monitor's power use: the app asks before turning it on. Blank lines and lines starting with # are ignored. Imported
 # controls work like the built-in ones: monitor get|set <name>, picture, profiles.
 CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/controls.txt"
-BUILTIN_NAMES="$SETTINGS status doctor pbp swap input left layout picture get set profile controls"
+BUILTIN_NAMES="$SETTINGS lowblue smartimage status doctor pbp swap input left layout picture get set profile controls"
 # Codes an imported control may not use: resets, power, save/keys, and what the
 # built-in controls already use.
 DENIED_CODES="02 04 05 06 08 0A B0 C6 D6 60 A5 F6 10 12 14 16 18 1A 62 72 86 87 8D CA CC DC F0 EB"
@@ -413,7 +414,88 @@ setting_show() {
   else n=$(choice_name "$s" "$cur"); echo "${n:-$cur}"; fi
 }
 
+# ---- LowBlue Mode (the menu's first item: Off, or On at level 1-4) --------------------
+# It is the SmartImage mode "lowblue" (DC) plus the monitor's own values for the level; the
+# monitor has no code for the level itself. Measured with walk.sh, one round per level:
+# level, red, green, blue gain, brightness, sharpness (the menu's 0-100). Writing DC =
+# lowblue makes the monitor apply level 2's values; the others are set on top of that.
+LOWBLUE_LEVELS="1 99 97 90 100 50
+2 100 100 68 100 50
+3 100 100 68 70 100
+4 100 100 63 70 100"
+
+# lowblue_from_picture: reads `picture` output on stdin, prints off, 1-4 or custom
+lowblue_from_picture() {
+  awk -v table="$LOWBLUE_LEVELS" '
+    BEGIN { n = split(table, rows, "\n") }
+    $1 == "mode" { mode = $2 }
+    $1 == "gain-red" { r = $2 } $1 == "gain-green" { g = $2 } $1 == "gain-blue" { b = $2 }
+    $1 == "brightness" { br = $2 } $1 == "sharpness" { sh = $2 }
+    END {
+      if (mode != "lowblue") { print "off"; exit }
+      for (i = 1; i <= n; i++) {
+        split(rows[i], f, " ")
+        if (f[2] == r && f[3] == g && f[4] == b && f[5] == br && f[6] == sh) { print f[1]; exit }
+      }
+      print "custom"
+    }'
+}
+
+# lowblue_set SETTING VALUE: right after the mode is written the monitor is busy for a moment
+# and can refuse a write, so try again a few times
+lowblue_set() {
+  n=0
+  while [ $n -lt 6 ]; do
+    ( set_setting "$1" "$2" > /dev/null 2>&1 ) && return 0
+    n=$((n + 1))
+    sleep 0.7
+  done
+  die "lowblue: could not set $1 to $2: the monitor did not accept it"
+}
+
+# Levels 2 and 3 can be set: the mode itself gives level 2's colour gains, and level 3 only
+# differs in brightness and sharpness. Levels 1 and 4 differ in the colour gains, and the monitor
+# ignores gain writes while a SmartImage mode is on (measured), so they can be read but not set.
+# Careful: what is written while the mode is on is what the monitor remembers as the mode's
+# values (writing brightness 90 there made every later "mode lowblue" apply 90). So both values
+# are always written explicitly, and "off" puts level 2's back when level 3 was on.
+set_lowblue() {
+  level=${1:-}
+  case "$level" in
+    off | 2 | 3) ;;
+    1 | 4) die "lowblue: level $level changes the colour gains, which the monitor ignores over DDC while a SmartImage mode is on; choose level $level in the monitor's menu (it is read back correctly)" ;;
+    *) die "usage: monitor lowblue off|2|3  (1 and 4 can only be chosen in the monitor's menu)" ;;
+  esac
+  pause="${MONITOR_LOWBLUE_PAUSE:-1}"
+  pic=$(show_picture) || exit 1
+  now=$(echo "$pic" | awk '$1 == "lowblue" {print $2}')
+  case "$level" in
+    off)
+      if [ "$now" = 3 ]; then lowblue_set brightness 100; lowblue_set sharpness 50; fi
+      set_setting mode off > /dev/null || exit 1
+      ;;
+    2 | 3)
+      if [ "$now" = 1 ] || [ "$now" = 4 ]; then   # other colour gains: start again from off
+        set_setting mode off > /dev/null || exit 1
+        sleep "$pause"
+        now=off
+      fi
+      if [ "$now" = off ] || [ "$now" = custom ]; then
+        mode=$(echo "$pic" | awk '$1 == "mode" {print $2}')
+        if [ "$mode" != lowblue ]; then
+          set_setting mode lowblue > /dev/null || exit 1   # the monitor applies the mode's values
+          sleep "$pause"
+        fi
+      fi
+      if [ "$level" = 3 ]; then lowblue_set brightness 70; lowblue_set sharpness 100
+      else lowblue_set brightness 100; lowblue_set sharpness 50; fi
+      ;;
+  esac
+  echo "lowblue $level"
+}
+
 get_setting() {
+  if [ "$1" = lowblue ]; then show_picture | lowblue_from_picture; return; fi
   code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
   line=$(vcp_query "$code") || die "$NO_LINK"
   # shellcheck disable=SC2086
@@ -422,6 +504,7 @@ get_setting() {
 }
 
 set_setting() {
+  if [ "$1" = lowblue ]; then set_lowblue "${2:-}"; return; fi
   code=$(setting_code "$1"); [ -n "$code" ] || die "unknown setting '$1' (one of: $SETTINGS)"
   val=${2:-}; [ -n "$val" ] || die "usage: monitor set $1 <value>"
   if is_range "$1"; then
@@ -458,7 +541,7 @@ show_picture() {
   codes=""; for s in $SETTINGS; do codes="$codes $(setting_code "$s")"; done
   # shellcheck disable=SC2086
   lines=$(vcp_query $codes) || die "$NO_LINK"
-  for s in $SETTINGS; do
+  out=$(for s in $SETTINGS; do
     code=$(setting_code "$s")
     line=$(echo "$lines" | awk -v c="$code" '$2 == c {print; exit}')
     if [ -n "$line" ]; then
@@ -467,7 +550,9 @@ show_picture() {
     else
       echo "$s n/a"
     fi
-  done
+  done)
+  echo "$out"
+  echo "lowblue $(echo "$out" | lowblue_from_picture)"   # worked out from the values above
 }
 
 # ---- profiles -------------------------------------------------------------
@@ -510,7 +595,7 @@ save_profile() {
     # the gain is only meaningful with the "user" preset
     echo "$pic" | awk '$1 == "preset" && $2 == "user" {u = 1} {l[NR] = $0}
       END {for (i = 1; i <= NR; i++) {split(l[i], a, " ");
-        if (a[2] != "n/a" && (a[1] !~ /^gain-/ || u)) print a[1], a[2]}}'
+        if (a[2] != "n/a" && a[1] != "lowblue" && (a[1] !~ /^gain-/ || u)) print a[1], a[2]}}'
   } > "$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; die "could not save the profile"; }
   echo "saved $name"
 }
@@ -652,7 +737,7 @@ case "${1:-}" in
   set)
     set_setting "${2:-}" "${3:-}"
     ;;
-  brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | smartcontrast | smartresponse | gain-red | gain-green | gain-blue)
+  brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | smartcontrast | smartresponse | lowblue | gain-red | gain-green | gain-blue)
     if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
     ;;
   smartimage)

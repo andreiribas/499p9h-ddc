@@ -94,6 +94,11 @@ CATEGORIES = [
             ("1:1", "1:1")]),
     ]),
     ("colour", "Colour", "preferences-color-symbolic", [
+        # levels 1 and 4 can be read but not chosen over DDC (the monitor locks the colour gains
+        # while a SmartImage mode is on), so choosing them gives the explanation and goes back
+        ("choice", "lowblue", "LowBlue Mode", [
+            ("Off", "off"), ("Level 1 (set in the monitor's menu)", "1"), ("Level 2", "2"),
+            ("Level 3", "3"), ("Level 4 (set in the monitor's menu)", "4")]),
         ("choice", "preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
             ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
     ]),
@@ -664,7 +669,7 @@ class MonitorWindow(Adw.ApplicationWindow):
             else:
                 self.sending.discard(name)
                 self.end_busy()
-                if name == "mode":  # the mode's preset changed other values: show them
+                if name in ("mode", "lowblue"):  # the mode's preset changed other values: show them
                     self.load_picture()
             return False
 

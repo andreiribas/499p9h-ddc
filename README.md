@@ -47,6 +47,9 @@ monitor layout <left> <right>   EXPERIMENTAL, unreliable: set both windows (PBP 
 monitor picture                 all picture settings, one per line
 monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, volume)
 monitor mute|preset|gamma|mode [value]
+monitor lowblue off|2|3         the menu's LowBlue Mode (SmartImage lowblue plus the level's values). Levels 1 and 4 can be
+                                read but not chosen over DDC: the monitor ignores colour-gain writes while a SmartImage mode
+                                is on, and those levels differ in the gains. Choose them in the monitor's menu
 monitor smartimage <mode>       the menu's SmartImage (VCP DC): off easyread office photo movie game economy lowblue
                                 smartuniformity. Each mode also sets the monitor's own brightness, gamma, sharpness ...;
                                 Movie turns SmartContrast and SmartResponse on, Economy turns them off
@@ -85,7 +88,7 @@ and the controls of the one you click are on the right (on a narrow window they 
 |---|---|
 | Input | the PBP switch, a source picker for one screen or a left and a right picker, Swap and Apply |
 | Picture | SmartImage (the modes), brightness, contrast, sharpness, SmartResponse, SmartContrast, gamma, picture format |
-| Colour | colour temperature, and the red/green/blue gain when it is User (writing a gain makes the monitor switch to the User preset by itself) |
+| Colour | LowBlue Mode (off, levels 1-4), colour temperature, and the red/green/blue gain when it is User (writing a gain makes the monitor switch to the User preset by itself) |
 | Audio | volume, mute |
 | On-screen menu | show/hide the monitor's menu, its language |
 | Imported controls | controls imported from a file (only listed when there are some) |

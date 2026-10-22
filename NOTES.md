@@ -159,3 +159,26 @@ monitor's own preset for other values (what changed when moving to it from the p
 
 0C (colour temperature readout) follows the colour temperature (14), so it moves with the
 preset and is not a control. The capability list also has DC = 0xe1, which no mode used.
+
+## LowBlue Mode (the menu's first item: Off, or On at level 1-4)
+
+It is the SmartImage mode LowBlue (DC = 0x0b, User colour temperature, gamma 2.2) plus values that
+depend on the level (measured with walk.sh, one round per step; gain = red/green/blue):
+
+| Level | Gain | Brightness | Sharpness |
+|---|---|---|---|
+| 1 | 99 / 97 / 90 | 100 | 50 |
+| 2 | 100 / 100 / 68 | 100 | 50 |
+| 3 | 100 / 100 / 68 | 70 | 100 |
+| 4 | 100 / 100 / 63 | 70 | 100 |
+
+No code holds the level itself. Findings from testing over DDC:
+- Writing DC = 0x0b makes the monitor apply level 2's values; writing DC = 0 restores the user's own.
+- **While a SmartImage mode is on, the monitor ignores writes to the colour gains** (16/18/1A):
+  the value stays, even with verification off. Brightness and sharpness can be written. So over DDC
+  only Off, level 2 and level 3 can be chosen; levels 1 and 4 can be read (by matching the values).
+- **Writes made while the mode is on become the mode's stored values**: after writing brightness 90
+  there, every later DC = 0x0b applied 90. `monitor lowblue` therefore always writes brightness and
+  sharpness explicitly, and puts level 2's back when leaving level 3. (This was found by changing
+  them during testing and restoring them: entering the mode applies brightness 100, sharpness 50.)
+

@@ -56,6 +56,7 @@ looks_known() {
     *smartcontrast*) echo "monitor smartcontrast"; return 0 ;;
     *smartresponse*) echo "monitor smartresponse"; return 0 ;;
     *smartimage*) echo "monitor mode"; return 0 ;;
+    *lowblue*) echo "monitor mode (lowblue) and the RGB gains"; return 0 ;;
     *smart*) return 0 ;;
   esac
   case "$l" in

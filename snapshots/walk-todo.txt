@@ -19,3 +19,8 @@ SmartImage: Game to Economy | Set SmartImage to Game now. Then in step 3 change 
 SmartImage: Economy to LowBlue Mode | Set SmartImage to Economy now. Then in step 3 change it from Economy to LowBlue Mode.
 SmartImage: LowBlue Mode to SmartUniformity | Set SmartImage to LowBlue Mode now. Then in step 3 change it from LowBlue Mode to SmartUniformity.
 SmartImage: SmartUniformity to Off | Set SmartImage to SmartUniformity now. Then in step 3 change it from SmartUniformity to Off.
+LowBlue Mode: Off to 1 | Check in the monitor's menu (the first item, not the SmartImage button) that LowBlue Mode is Off, and set SmartImage to Off too (use the first button). Do not change LowBlue Mode yet. In step 3 turn it On at level 1.
+LowBlue Mode: 1 to 2 | Set LowBlue Mode to level 1 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 change it to level 2.
+LowBlue Mode: 2 to 3 | Set LowBlue Mode to level 2 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 change it to level 3.
+LowBlue Mode: 3 to 4 | Set LowBlue Mode to level 3 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 change it to level 4.
+LowBlue Mode: 4 to Off | Set LowBlue Mode to level 4 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 turn it Off.
