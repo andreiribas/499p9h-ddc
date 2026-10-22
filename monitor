@@ -20,7 +20,7 @@
 #   monitor brightness [N|+N|-N]    show / set / adjust (also contrast sharpness volume)
 #   monitor mute|preset|gamma|mode [value]   mute: on off; preset: srgb 5000k 6500k 7500k
 #                           8200k 9300k 11500k user; gamma: 1.8 2.0 2.2 2.4 2.6;
-#                           mode: standard productivity mixed movie games
+#                           mode (the menu's SmartImage): off easyread office photo movie game economy lowblue smartuniformity
 #   monitor scaling widescreen|4:3|1:1   the menu's Picture Format (16:9 is only shown, see README)
 #   monitor smartcontrast on|off    (found with walk.sh; the monitor warns that "on" can use more power)
 #   monitor smartresponse off|fast|faster|fastest   (found with walk.sh: pixel response time)
@@ -213,10 +213,18 @@ gamma 2.0 100
 gamma 2.2 120
 gamma 2.4 140
 gamma 2.6 160
+mode off 0
+mode office 1
+mode photo 2
+mode movie 3
+mode game 5
+mode economy 8
+mode lowblue 11
+mode easyread 14
+mode smartuniformity 31
 mode standard 0
 mode productivity 1
 mode mixed 2
-mode movie 3
 mode games 5
 smartcontrast off 0
 smartcontrast on 1
@@ -470,7 +478,7 @@ show_picture() {
 PROFILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/profiles"
 # The order matters: PBP and inputs first (the monitor re-syncs for a few seconds),
 # then gain before preset (writing a gain makes the monitor switch to "user").
-PROFILE_ORDER="pbp input left gain-red gain-green gain-blue preset gamma mode smartcontrast smartresponse brightness contrast sharpness volume mute"
+PROFILE_ORDER="pbp input left mode gain-red gain-green gain-blue preset gamma smartcontrast smartresponse brightness contrast sharpness volume mute"
 
 profile_file() {
   case "$1" in "" | *[!A-Za-z0-9_-]*) die "a profile name uses letters, digits, - and _" ;; esac
@@ -646,6 +654,10 @@ case "${1:-}" in
     ;;
   brightness | contrast | sharpness | volume | mute | preset | gamma | mode | scaling | osd | language | smartcontrast | smartresponse | gain-red | gain-green | gain-blue)
     if [ -z "${2:-}" ]; then get_setting "$1"; else set_setting "$1" "$2"; fi
+    ;;
+  smartimage)
+    shift
+    exec "$0" mode "$@"
     ;;
   controls)
     case "${2:-}" in

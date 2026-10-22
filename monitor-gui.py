@@ -76,6 +76,12 @@ NO_LINK_SUBTITLE = "Not answering: the monitor is probably showing another input
 #   ("mute",)  the mute switch.
 CATEGORIES = [
     ("picture", "Picture", "display-brightness-symbolic", [
+        # a SmartImage mode also sets the monitor's own brightness, gamma, sharpness ...: the
+        # page is read again after it is changed
+        ("choice", "mode", "SmartImage", [
+            ("Off", "off"), ("EasyRead", "easyread"), ("Office", "office"), ("Photo", "photo"),
+            ("Movie", "movie"), ("Game", "game"), ("Economy", "economy"),
+            ("LowBlue Mode", "lowblue"), ("SmartUniformity", "smartuniformity")]),
         ("range", "brightness", "Brightness", 100),
         ("range", "contrast", "Contrast", 100),
         ("range", "sharpness", "Sharpness", 100),
@@ -86,8 +92,6 @@ CATEGORIES = [
         ("choice", "scaling", "Picture format", [
             ("Wide screen", "widescreen"), ("4:3", "4:3"), ("16:9 (set in the monitor's menu)", "16:9"),
             ("1:1", "1:1")]),
-        ("choice", "mode", "Display mode", [(n, n.lower()) for n in
-            ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
     ]),
     ("colour", "Colour", "preferences-color-symbolic", [
         ("choice", "preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
@@ -116,6 +120,11 @@ PICTURE_GAIN = [("gain-red", "Red"), ("gain-green", "Green"), ("gain-blue", "Blu
 # consumption): the app asks first, unless that is switched off in Options. Imported
 # controls get the same when their line in the controls file ends with "| energy".
 ENERGY_SETTINGS = {"smartcontrast": "SmartContrast"}
+# Modes that switch such a setting on as part of their preset (found with walk.sh)
+ENERGY_CHOICES = {
+    ("mode", "movie"): "The Movie mode also turns SmartContrast on, which can increase the "
+    "monitor's energy consumption. Switch to Movie anyway?",
+}
 # Sharpness is 0-100 like the monitor's menu, but the monitor only has 11 steps of it
 SLIDER_STEPS = {"sharpness": 10}
 # The status bar at the bottom is always there. While a change is being sent to the monitor
@@ -595,7 +604,7 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         alert = Adw.AlertDialog(heading="This can increase energy consumption", body=text)
         alert.add_response("cancel", "Cancel")
-        alert.add_response("continue", "Turn on")
+        alert.add_response("continue", "Continue")
         alert.set_default_response("cancel")
         alert.set_close_response("cancel")
         alert.connect("response", answer)
@@ -606,6 +615,8 @@ class MonitorWindow(Adw.ApplicationWindow):
         (not an energy setting, switched off in Options, or the value means off)."""
         if not self.state.get("energy_warning", True):
             return None
+        if (name, value) in ENERGY_CHOICES:
+            return ENERGY_CHOICES[(name, value)]
         if name in ENERGY_SETTINGS:
             label, off_values = ENERGY_SETTINGS[name], ("off",)
         elif name in self.energy_custom:
@@ -653,6 +664,8 @@ class MonitorWindow(Adw.ApplicationWindow):
             else:
                 self.sending.discard(name)
                 self.end_busy()
+                if name == "mode":  # the mode's preset changed other values: show them
+                    self.load_picture()
             return False
 
         threading.Thread(target=work, daemon=True).start()

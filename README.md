@@ -47,6 +47,9 @@ monitor layout <left> <right>   EXPERIMENTAL, unreliable: set both windows (PBP 
 monitor picture                 all picture settings, one per line
 monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, volume)
 monitor mute|preset|gamma|mode [value]
+monitor smartimage <mode>       the menu's SmartImage (VCP DC): off easyread office photo movie game economy lowblue
+                                smartuniformity. Each mode also sets the monitor's own brightness, gamma, sharpness ...;
+                                Movie turns SmartContrast and SmartResponse on, Economy turns them off
 monitor get <setting> | set <setting> <value>
 monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain 0-100 (VCP 16/18/1A)
 monitor scaling widescreen|4:3|1:1     the menu's Picture Format (VCP 86). The monitor reports 16:9 (0xFF) but
@@ -67,8 +70,7 @@ Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
 volume (`62`) 0-100, sharpness (`87`) 0-100 like the monitor's menu (the monitor has 11
 steps, so it moves in steps of 10: 54 is rounded to 50), `mute` on/off (`8D`), colour `preset`
 (`14`: srgb 5000k 6500k 7500k 8200k 9300k 11500k user), `gamma` (`72`: 1.8 2.0 2.2
-2.4 2.6) and `mode` (`DC`: standard productivity mixed movie games). The names of the
-`mode` values come from the monitor's capability list and are not checked against its menu.
+2.4 2.6) and `mode` (`DC`, the menu's SmartImage; the values were found with `walk.sh`, see NOTES.md).
 
 Sources: `hdmi1`, `hdmi2`, `usbc` and `dp` (the DisplayPort connector), named as in the monitor's own menu. Over DDC the monitor numbers them differently: its USB-C port is "DisplayPort-1" (`dp1`), the DisplayPort connector is "DisplayPort-2" (`dp2`), and menu "HDMI 1" / "HDMI 2" are DDC values 0x12 / 0x11 (checked on one monitor by plugging a laptop in and switching to each value). A GNOME shortcut works well for
 `monitor swap`.
@@ -82,7 +84,7 @@ and the controls of the one you click are on the right (on a narrow window they 
 | Menu | Controls |
 |---|---|
 | Input | the PBP switch, a source picker for one screen or a left and a right picker, Swap and Apply |
-| Picture | brightness, contrast, sharpness, SmartResponse, SmartContrast, gamma, picture format, display mode |
+| Picture | SmartImage (the modes), brightness, contrast, sharpness, SmartResponse, SmartContrast, gamma, picture format |
 | Colour | colour temperature, and the red/green/blue gain when it is User (writing a gain makes the monitor switch to the User preset by itself) |
 | Audio | volume, mute |
 | On-screen menu | show/hide the monitor's menu, its language |

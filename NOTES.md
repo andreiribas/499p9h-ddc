@@ -139,3 +139,23 @@ command.
   Picture Format is probably VCP 86 (read as 0x08 = "Wide Screen"?). The menu's Sharpness
   scale is 0-100 while VCP 87 reports 0-10 (maximum 10): the menu value is 10x. `monitor` and
   the app now use the menu's 0-100 (steps of 10; other values are rounded).
+
+## SmartImage = VCP DC (found with walk.sh, 2026-10-21/22)
+
+The monitor's first button lists the SmartImage modes. Each one sets DC and also the
+monitor's own preset for other values (what changed when moving to it from the previous mode):
+
+| Mode | DC | Preset applied |
+|---|---|---|
+| Off | 0x00 | back to the user's own values (brightness, gamma, sharpness) |
+| EasyRead | 0x0e | brightness 100, gamma 2.2, sharpness 50 |
+| Office | 0x01 | brightness 70, sharpness 60 |
+| Photo | 0x02 | brightness 100, sharpness 70 |
+| Movie | 0x03 | colour temperature 7500 K, gamma 2.4, sharpness 90, SmartResponse Fast, **SmartContrast on** |
+| Game | 0x05 | colour temperature User, gamma 2.2 |
+| Economy | 0x08 | brightness 8, sharpness 50, 6500 K, SmartResponse off, SmartContrast off |
+| LowBlue Mode | 0x0b | colour temperature User, blue gain 68, brightness 100 |
+| SmartUniformity | 0x1f | 6500 K, blue gain 100 |
+
+0C (colour temperature readout) follows the colour temperature (14), so it moves with the
+preset and is not a control. The capability list also has DC = 0xe1, which no mode used.
