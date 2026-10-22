@@ -24,7 +24,7 @@
 #   monitor scaling widescreen|4:3|1:1   the menu's Picture Format (16:9 is only shown, see README)
 #   monitor smartcontrast on|off    (found with walk.sh; the monitor warns that "on" can use more power)
 #   monitor smartresponse off|fast|faster|fastest   (found with walk.sh: pixel response time)
-#   monitor lowblue off|2|3    the menu's LowBlue Mode (levels 1 and 4 can be read but only chosen in the menu)
+#   monitor lowblue off|1|2|3|4|on   LowBlue Mode: a level is applied in software (see README); on = the monitor's own mode
 #   monitor osd on|off      show the monitor's menu or not (the buttons still work; `osd on` brings it back)
 #   monitor language <name> english french german ... (see the README)
 #   monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain, 0-100 (preset "user")
@@ -417,80 +417,110 @@ setting_show() {
 # ---- LowBlue Mode (the menu's first item: Off, or On at level 1-4) --------------------
 # It is the SmartImage mode "lowblue" (DC) plus the monitor's own values for the level; the
 # monitor has no code for the level itself. Measured with walk.sh, one round per level:
-# level, red, green, blue gain, brightness, sharpness (the menu's 0-100). Writing DC =
-# lowblue makes the monitor apply level 2's values; the others are set on top of that.
+# level, red, green, blue gain, brightness, sharpness (the menu's 0-100). The table is only used
+# to tell which level is on, by matching these values (see lowblue_from_picture).
 LOWBLUE_LEVELS="1 99 97 90 100 50
 2 100 100 68 100 50
 3 100 100 68 70 100
 4 100 100 63 70 100"
 
-# lowblue_from_picture: reads `picture` output on stdin, prints off, 1-4 or custom
+# lowblue_from_picture: reads `picture` output on stdin, prints off, 1-4 or custom. A level is
+# recognised by its values, whether the monitor's own mode is on or the level was applied by
+# `monitor lowblue N` (mode off, User colour temperature).
 lowblue_from_picture() {
   awk -v table="$LOWBLUE_LEVELS" '
     BEGIN { n = split(table, rows, "\n") }
-    $1 == "mode" { mode = $2 }
+    $1 == "mode" { mode = $2 } $1 == "preset" { preset = $2 }
     $1 == "gain-red" { r = $2 } $1 == "gain-green" { g = $2 } $1 == "gain-blue" { b = $2 }
     $1 == "brightness" { br = $2 } $1 == "sharpness" { sh = $2 }
     END {
-      if (mode != "lowblue") { print "off"; exit }
+      if (mode != "lowblue" && preset != "user") { print "off"; exit }
       for (i = 1; i <= n; i++) {
         split(rows[i], f, " ")
         if (f[2] == r && f[3] == g && f[4] == b && f[5] == br && f[6] == sh) { print f[1]; exit }
       }
-      print "custom"
+      print (mode == "lowblue" ? "custom" : "off")
     }'
 }
 
-# lowblue_set SETTING VALUE: right after the mode is written the monitor is busy for a moment
-# and can refuse a write, so try again a few times
-lowblue_set() {
+# The monitor remembers the level (1-4) last chosen in its menu: writing DC = lowblue turns its
+# own mode on with that level ("monitor lowblue on"). Its level cannot be chosen over DDC (the
+# colour gains differ between levels, and the monitor ignores gain writes while a SmartImage mode
+# is on). So "monitor lowblue 1-4" applies the level in software, with the monitor's mode off:
+# the level's colour gains (this is what reduces the blue), and the gamma, brightness and
+# sharpness the monitor's own preset uses. The values it replaces are saved in LOWBLUE_SAVED,
+# and "monitor lowblue off" puts them back (only the ones still as they were set: anything changed
+# since stays). The monitor's menu shows LowBlue Mode off, with the colour temperature User.
+LOWBLUE_SAVED="${XDG_CONFIG_HOME:-$HOME/.config}/monitor-ctl/lowblue-saved"
+
+pic_value() { echo "$1" | awk -v n="$2" '$1 == n {print $2; exit}'; }   # from `picture` text
+saved_value() { awk -v w="$1" -v k="$2" '$1 == w && $2 == k {print $3; exit}' "$LOWBLUE_SAVED"; }
+
+# lowblue_write SETTING VALUE: the monitor can be busy for a moment, so try a few times
+lowblue_write() {
   n=0
-  while [ $n -lt 6 ]; do
+  while [ $n -lt 5 ]; do
     ( set_setting "$1" "$2" > /dev/null 2>&1 ) && return 0
     n=$((n + 1))
-    sleep 0.7
+    sleep 0.5
   done
   die "lowblue: could not set $1 to $2: the monitor did not accept it"
 }
 
-# Levels 2 and 3 can be set: the mode itself gives level 2's colour gains, and level 3 only
-# differs in brightness and sharpness. Levels 1 and 4 differ in the colour gains, and the monitor
-# ignores gain writes while a SmartImage mode is on (measured), so they can be read but not set.
-# Careful: what is written while the mode is on is what the monitor remembers as the mode's
-# values (writing brightness 90 there made every later "mode lowblue" apply 90). So both values
-# are always written explicitly, and "off" puts level 2's back when level 3 was on.
+lowblue_apply() {   # level, picture text
+  level=$1; pic=$2
+  row=$(echo "$LOWBLUE_LEVELS" | awk -v l="$level" '$1 == l')
+  r=$(echo "$row" | awk '{print $2}'); g=$(echo "$row" | awk '{print $3}'); b=$(echo "$row" | awk '{print $4}')
+  br=$(echo "$row" | awk '{print $5}'); sh=$(echo "$row" | awk '{print $6}')
+  now=$(echo "$pic" | lowblue_from_picture)
+  # keep what was saved while a level is already on; otherwise save what is there now
+  if [ ! -f "$LOWBLUE_SAVED" ] || [ "$now" = off ] || [ "$now" = custom ]; then
+    mkdir -p "$(dirname "$LOWBLUE_SAVED")" || die "cannot write $LOWBLUE_SAVED"
+    for k in preset gamma gain-red gain-green gain-blue brightness sharpness; do
+      echo "saved $k $(pic_value "$pic" "$k")"
+    done > "$LOWBLUE_SAVED"
+  fi
+  grep '^saved ' "$LOWBLUE_SAVED" > "$LOWBLUE_SAVED.new"
+  printf 'applied gain-red %s\napplied gain-green %s\napplied gain-blue %s\napplied gamma 2.2\napplied brightness %s\napplied sharpness %s\n' \
+    "$r" "$g" "$b" "$br" "$sh" >> "$LOWBLUE_SAVED.new"
+  mv "$LOWBLUE_SAVED.new" "$LOWBLUE_SAVED"
+  # the gains first: writing one makes the monitor switch to the User colour temperature
+  lowblue_write gain-red "$r"; lowblue_write gain-green "$g"; lowblue_write gain-blue "$b"
+  lowblue_write gamma 2.2; lowblue_write brightness "$br"; lowblue_write sharpness "$sh"
+}
+
+lowblue_restore() {   # picture text
+  pic=$1
+  [ -f "$LOWBLUE_SAVED" ] || return 0
+  for k in gain-red gain-green gain-blue gamma brightness sharpness; do
+    was=$(saved_value saved "$k"); set_to=$(saved_value applied "$k"); cur=$(pic_value "$pic" "$k")
+    if [ -n "$was" ] && [ "$cur" = "$set_to" ] && [ "$cur" != "$was" ]; then lowblue_write "$k" "$was"; fi
+  done
+  # last: writing the gains switched the colour temperature to User
+  was=$(saved_value saved preset)
+  if [ -n "$was" ] && [ "$was" != user ] && [ "$(pic_value "$pic" preset)" = user ]; then lowblue_write preset "$was"; fi
+  rm -f "$LOWBLUE_SAVED"
+}
+
 set_lowblue() {
   level=${1:-}
-  case "$level" in
-    off | 2 | 3) ;;
-    1 | 4) die "lowblue: level $level changes the colour gains, which the monitor ignores over DDC while a SmartImage mode is on; choose level $level in the monitor's menu (it is read back correctly)" ;;
-    *) die "usage: monitor lowblue off|2|3  (1 and 4 can only be chosen in the monitor's menu)" ;;
-  esac
+  case "$level" in off | on | 1 | 2 | 3 | 4) ;; *) die "usage: monitor lowblue off|1|2|3|4   (on: the monitor's own mode, with the level it remembers)" ;; esac
   pause="${MONITOR_LOWBLUE_PAUSE:-1}"
   pic=$(show_picture) || exit 1
-  now=$(echo "$pic" | awk '$1 == "lowblue" {print $2}')
-  case "$level" in
-    off)
-      if [ "$now" = 3 ]; then lowblue_set brightness 100; lowblue_set sharpness 50; fi
-      set_setting mode off > /dev/null || exit 1
-      ;;
-    2 | 3)
-      if [ "$now" = 1 ] || [ "$now" = 4 ]; then   # other colour gains: start again from off
-        set_setting mode off > /dev/null || exit 1
-        sleep "$pause"
-        now=off
-      fi
-      if [ "$now" = off ] || [ "$now" = custom ]; then
-        mode=$(echo "$pic" | awk '$1 == "mode" {print $2}')
-        if [ "$mode" != lowblue ]; then
-          set_setting mode lowblue > /dev/null || exit 1   # the monitor applies the mode's values
-          sleep "$pause"
-        fi
-      fi
-      if [ "$level" = 3 ]; then lowblue_set brightness 70; lowblue_set sharpness 100
-      else lowblue_set brightness 100; lowblue_set sharpness 50; fi
-      ;;
-  esac
+  mode=$(pic_value "$pic" mode)
+  if [ "$level" = on ]; then
+    set_setting mode lowblue > /dev/null || exit 1
+    echo "lowblue on"; return 0
+  fi
+  if [ "$level" != off ] && [ "$(pic_value "$pic" lowblue)" = "$level" ]; then
+    echo "lowblue $level"; return 0   # already on that level
+  fi
+  if [ "$mode" = lowblue ]; then   # the monitor's own mode is on: leave it (it puts your values back)
+    set_setting mode off > /dev/null || exit 1
+    sleep "$pause"
+    pic=$(show_picture) || exit 1
+  fi
+  if [ "$level" = off ]; then lowblue_restore "$pic"; else lowblue_apply "$level" "$pic"; fi
   echo "lowblue $level"
 }
 

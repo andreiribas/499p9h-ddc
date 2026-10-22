@@ -173,12 +173,31 @@ depend on the level (measured with walk.sh, one round per step; gain = red/green
 | 4 | 100 / 100 / 63 | 70 | 100 |
 
 No code holds the level itself. Findings from testing over DDC:
-- Writing DC = 0x0b makes the monitor apply level 2's values; writing DC = 0 restores the user's own.
+- Writing DC = 0x0b turns the mode on with **the level the monitor remembers**, i.e. the one last
+  chosen in its menu (it applied level 2's values at first, only because level 2 was remembered
+  then; after the owner had picked level 4 in the menu it applied level 4's: blue gain 63,
+  brightness 70, sharpness 100). Writing DC = 0 restores the user's own values.
 - **While a SmartImage mode is on, the monitor ignores writes to the colour gains** (16/18/1A):
   the value stays, even with verification off. Brightness and sharpness can be written. So over DDC
-  only Off, level 2 and level 3 can be chosen; levels 1 and 4 can be read (by matching the values).
-- **Writes made while the mode is on become the mode's stored values**: after writing brightness 90
-  there, every later DC = 0x0b applied 90. `monitor lowblue` therefore always writes brightness and
-  sharpness explicitly, and puts level 2's back when leaving level 3. (This was found by changing
-  them during testing and restoring them: entering the mode applies brightness 100, sharpness 50.)
+  the level cannot be chosen, only Off / On; the level on can be read back by matching the values.
+- **Writes made while the mode is on become the mode's stored values** (writing brightness 90 there
+  made every later DC = 0x0b apply 90). An earlier `monitor lowblue 2|3` imitated levels by writing
+  brightness and sharpness inside the mode; that was wrong (the gains still came from the remembered
+  level) and could overwrite stored values, so it was removed: `monitor lowblue on|off` writes only DC.
+- A bug of that earlier version (after switching the mode off it used a stale reading, skipped
+  re-entering the mode, and wrote brightness 70 as the user's own value) was caught and undone; the
+  command now never writes brightness or sharpness at all.
+
+### How the app offers levels 1-4 (software)
+
+Since the monitor's own mode cannot be given a level over DDC (above), `monitor lowblue 1|2|3|4` applies
+the level's values with the monitor's mode off: gains (the part that reduces the blue), gamma 2.2,
+brightness and sharpness, from the table. The values it replaces are saved in
+~/.config/monitor-ctl/lowblue-saved ("saved" = before, "applied" = what the level set), and
+`lowblue off` writes back each saved value only if it is still the applied one, the colour temperature
+last (writing a gain switches it to User). A level is recognised from the values, so it also shows when
+the monitor's own mode is on at that level. Tested on the real monitor: levels 1-4 read back as 1-4 and
+`off` restores all 16 settings exactly. The difference from the buttons: the monitor's menu keeps showing
+LowBlue Mode off (colour temperature User). A hidden code that selects the real level has not been found;
+the write-only codes (B0, CF, DE, A2, 76 ...) were not probed.
 

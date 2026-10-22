@@ -47,9 +47,13 @@ monitor layout <left> <right>   EXPERIMENTAL, unreliable: set both windows (PBP 
 monitor picture                 all picture settings, one per line
 monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, volume)
 monitor mute|preset|gamma|mode [value]
-monitor lowblue off|2|3         the menu's LowBlue Mode (SmartImage lowblue plus the level's values). Levels 1 and 4 can be
-                                read but not chosen over DDC: the monitor ignores colour-gain writes while a SmartImage mode
-                                is on, and those levels differ in the gains. Choose them in the monitor's menu
+monitor lowblue off|1|2|3|4|on  LowBlue Mode. The monitor's own mode cannot be given a level over DDC (it remembers the one last
+                                chosen with its buttons, and ignores colour-gain writes while a SmartImage mode is on), so a level
+                                is applied by this command: the level's colour gains, gamma 2.2 and the brightness and sharpness the
+                                monitor's own preset uses. The values it replaces are saved in ~/.config/monitor-ctl/lowblue-saved and
+                                `lowblue off` puts them back (only those still as it set them). The monitor's menu then shows LowBlue
+                                Mode off with the colour temperature User. `lowblue on` is the monitor's own mode, with the level it
+                                remembers. `monitor get lowblue` shows off or the level
 monitor smartimage <mode>       the menu's SmartImage (VCP DC): off easyread office photo movie game economy lowblue
                                 smartuniformity. Each mode also sets the monitor's own brightness, gamma, sharpness ...;
                                 Movie turns SmartContrast and SmartResponse on, Economy turns them off
@@ -98,6 +102,18 @@ monitor's buttons. A status bar along the bottom of the window is always there: 
 and while a change is being sent to the monitor it says what is being applied and all the
 controls are read-only until it is done. A banner appears at the top when the monitor does
 not answer (it is probably showing another input).
+
+The app also reads the monitor on its own (every few seconds, when the window gets focus, and when
+you open a menu), and the bar says "Reading the monitor…" and then "Finished reading the monitor".
+Those reads can get in the way of the monitor's own on-screen menu, so the **pause button** next to
+the refresh button stops all of them ("Paused" shows in the bar); the refresh button still reads
+when you press it, and resuming does one read to catch up.
+
+Changes you make in the app always go to the monitor, paused or not, and the app reads the monitor back
+afterwards, so the screen shows what the monitor really has. The status bar names a change the way the menu does, for example "Applying LowBlue Mode to Level 3…". While paused, what the screen shows can be
+out of date, so a banner says so ("Read now" reads), and picking the item a dropdown already shows still
+sends it. If the monitor does not take a value (for example because its own menu is open), a message
+says what it reports instead.
 
 Turning on a setting that can increase the monitor's energy consumption (SmartContrast, and
 imported controls marked `energy`) asks for confirmation first, like the monitor's own menu.

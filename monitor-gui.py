@@ -94,11 +94,11 @@ CATEGORIES = [
             ("1:1", "1:1")]),
     ]),
     ("colour", "Colour", "preferences-color-symbolic", [
-        # levels 1 and 4 can be read but not chosen over DDC (the monitor locks the colour gains
-        # while a SmartImage mode is on), so choosing them gives the explanation and goes back
+        # The monitor's own mode cannot be given a level over DDC (it ignores colour-gain writes
+        # while a SmartImage mode is on), so a level is applied in software: its colour gains
+        # etc. are set, and Off puts the values it replaced back. See `monitor lowblue`.
         ("choice", "lowblue", "LowBlue Mode", [
-            ("Off", "off"), ("Level 1 (set in the monitor's menu)", "1"), ("Level 2", "2"),
-            ("Level 3", "3"), ("Level 4 (set in the monitor's menu)", "4")]),
+            ("Off", "off"), ("Level 1", "1"), ("Level 2", "2"), ("Level 3", "3"), ("Level 4", "4")]),
         ("choice", "preset", "Colour temperature", [(n, n.replace(" ", "").lower()) for n in
             ("sRGB", "5000 K", "6500 K", "7500 K", "8200 K", "9300 K", "11500 K", "User")]),
     ]),
@@ -132,11 +132,15 @@ ENERGY_CHOICES = {
 }
 # Sharpness is 0-100 like the monitor's menu, but the monitor only has 11 steps of it
 SLIDER_STEPS = {"sharpness": 10}
-# The status bar at the bottom is always there. While a change is being sent to the monitor
-# it says what is being applied and the controls are read-only; "Done" stays this long
-# after the last change, so that a fast one does not just flash by
+# The status bar at the bottom is always there: "Ready", what is being applied (the controls are
+# read-only meanwhile), or that the monitor is being read (the controls stay usable).
 STATUS_READY = "Ready"
-BUSY_MIN_SECONDS = 0.6
+STATUS_READING = "Reading the monitor…"
+STATUS_READ_DONE = "Finished reading the monitor"
+STATUS_READ_FAILED = "The monitor did not answer"
+ERROR_SECONDS = 8  # how long an error (red) stays in the toast and in the status bar
+STATUS_HOLD_SECONDS = 1.5  # how long "Done" / "Finished reading" stays before "Ready"
+STATUS_PAUSED = "Paused: the app is not reading the monitor on its own (the refresh button still does)"
 # a slider sends its value this long after it stops moving
 SLIDER_DELAY_MS = 250
 
@@ -252,16 +256,32 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.sending = set()  # picture settings with a command running
         self.loading_picture = False
         self.custom_rows = []  # (row, setting name) of the imported controls on the Picture page
+        self.paused = False  # True: no automatic reads, so the monitor's own menu can be used
         self.busy_count = 0  # changes being applied; the controls are read-only while > 0
-        self.busy_hide_source = None  # timer that hides the status bar after the last change
+        self.read_count = 0  # reads from the monitor running (they never lock the controls)
+        self.error_until = 0.0  # time.monotonic() until which an error (red) keeps the status bar
+        self.busy_hide_source = None  # timer that puts the status bar back to "Ready"
         self.energy_custom = {}  # imported setting -> (label, values that mean "off")
         self.choice_prev = {}  # dropdown setting -> index it had before the user's change
+        self.choice_events = {}  # dropdown setting -> how many changes the user made (see on_reselect)
+        self.hooked = set()  # dropdown lists already listening for "the same item picked again"
+        self.expected = {}  # setting -> value just sent, to check what the monitor reports back
+        self.setting_labels = {}  # setting -> the name it has in the menu ("LowBlue Mode")
+        self.value_labels = {}  # setting -> {value sent: the name it has in the menu ("Level 3")}
 
         # header: refresh button and a spinner while a command runs
         header = Adw.HeaderBar()
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Read PBP state from the monitor")
         refresh.connect("clicked", lambda _b: self.refresh(announce=True))
         header.pack_start(refresh)
+        # While the app reads the monitor in the background, the monitor's own menu can be
+        # hard to use: this stops all automatic reads (refresh still reads when pressed).
+        self.pause_button = Gtk.ToggleButton(
+            icon_name="media-playback-pause-symbolic",
+            tooltip_text="Pause the automatic reading of the monitor (so its own menu can be used)",
+        )
+        self.pause_button.connect("toggled", lambda b: self.set_paused(b.get_active()))
+        header.pack_start(self.pause_button)
         menu = Gio.Menu()
         menu.append("Options", "win.options")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True))
@@ -345,10 +365,15 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.content_title = Adw.WindowTitle(title="Input")
         header.set_title_widget(self.content_title)
         self.banner = Adw.Banner(title=NO_LINK_SUBTITLE, revealed=False)
+        self.pause_banner = Adw.Banner(
+            title="Paused: the values shown may be out of date", button_label="Read now", revealed=False
+        )
+        self.pause_banner.connect("button-clicked", lambda _b: self.refresh(announce=True))
         self.toasts = Adw.ToastOverlay(child=self.stack)
         view = Adw.ToolbarView(content=self.toasts)
         view.add_top_bar(header)
         view.add_top_bar(self.banner)
+        view.add_top_bar(self.pause_banner)
         self.content_page = Adw.NavigationPage(title="Input", child=view)
 
         self.split = Adw.NavigationSplitView(
@@ -392,9 +417,14 @@ class MonitorWindow(Adw.ApplicationWindow):
                     _kind, name, label, options = item
                     row = Adw.ComboRow(title=label, model=Gtk.StringList.new([n for n, _ in options]))
                     row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+                    self.hook_reselect(row, name, options)
                     self.choice_rows[name] = (row, options)
+                    self.setting_labels[name] = label
+                    self.value_labels[name] = {v: l for l, v in options}
                     group.add(row)
                 else:  # mute
+                    self.setting_labels["mute"] = "Mute"
+                    self.value_labels["mute"] = {"on": "On", "off": "Off"}
                     self.mute_row = Adw.SwitchRow(title="Mute")
                     self.mute_row.connect(
                         "notify::active",
@@ -409,6 +439,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                 )
                 for name, title in PICTURE_GAIN:
                     self.gain_group.add(self.slider_row(name, title, 100))
+                    self.setting_labels[name] = f"{title} gain"
                 self.gain_group.set_visible(False)
                 page.add(self.gain_group)
             pages[key] = page
@@ -429,7 +460,7 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.content_title.set_title(self.page_titles[key])
         self.content_page.set_title(self.page_titles[key])
         self.split.set_show_content(True)
-        if key != "input":
+        if key != "input" and not self.paused:
             self.load_picture()
 
     def update_imported_row(self):
@@ -466,7 +497,10 @@ class MonitorWindow(Adw.ApplicationWindow):
                                for v in values.split()]
                     row = Adw.ComboRow(title=label, model=Gtk.StringList.new([n for n, _ in options]))
                     row.connect("notify::selected", lambda r, _p, n=name, o=options: self.on_choice(n, r, o))
+                    self.hook_reselect(row, name, options)
                     self.choice_rows[name] = (row, options)
+                    self.setting_labels[name] = label
+                    self.value_labels[name] = {v: l for l, v in options}
                     if energy:  # "off" and whatever the file numbers 0 need no question
                         zero = [v.split("=")[0] for v in values.split() if v.split("=")[1:] == ["0"]]
                         self.energy_custom[name] = (label, ("off", *zero))
@@ -524,23 +558,24 @@ class MonitorWindow(Adw.ApplicationWindow):
 
     def do_import_controls(self, path):
         def done(ok, text):
-            self.toast(text if text else ("Imported" if ok else "Import failed"))
+            self.toast(text if text else ("Imported" if ok else "Import failed"), error=not ok)
             if ok:
                 self.reload_custom_controls()
 
-        self.run_async(["controls", "import", path], done)
+        self.run_async(["controls", "import", path], done, "Importing the controls…")
 
     def remove_controls(self):
         def done(ok, text):
-            self.toast("Imported controls removed" if ok else (text or "Failed"))
+            self.toast("Imported controls removed" if ok else (text or "Failed"), error=not ok)
             self.reload_custom_controls()
 
-        self.run_async(["controls", "remove"], done)
+        self.run_async(["controls", "remove"], done, "Removing the imported controls…")
 
     picture_updating = False  # True while the widgets are being set from the monitor
 
     def slider_row(self, name, title, top):
         step = SLIDER_STEPS.get(name, 1)
+        self.setting_labels[name] = title
         scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, top, step)
         scale.set_draw_value(False)
         scale.set_digits(0)
@@ -586,13 +621,43 @@ class MonitorWindow(Adw.ApplicationWindow):
         if self.picture_updating:  # set from the monitor, not by the user
             self.choice_prev[name] = index
             return
+        self.choice_events[name] = self.choice_events.get(name, 0) + 1
+        self.apply_choice(name, row, options, index, self.choice_prev.get(name, 0))
+
+    def hook_reselect(self, row, name, options):
+        """Picking the item a dropdown already shows is no change for GTK, so nothing would be
+        sent. But what a dropdown shows can be out of date (the reading is paused, or the
+        monitor's own buttons were used), so listen to the list itself and send it anyway."""
+
+        def find(widget):
+            child = widget.get_first_child()
+            while child is not None:
+                if isinstance(child, Gtk.ListView) and id(child) not in self.hooked:
+                    self.hooked.add(id(child))
+                    child.connect("activate", lambda _lv, pos: self.on_reselect(name, row, options, pos))
+                find(child)
+                child = child.get_next_sibling()
+
+        find(row)
+
+    def on_reselect(self, name, row, options, position):
+        seen = self.choice_events.get(name, 0)
+
+        def check():  # a real change has already been handled by on_choice
+            if (self.choice_events.get(name, 0) == seen and row.get_selected() == position
+                    and not self.picture_updating):
+                self.apply_choice(name, row, options, position, position)
+            return False
+
+        GLib.idle_add(check)
+
+    def apply_choice(self, name, row, options, index, prev):
         value = options[index][1]
         text = self.energy_warning_for(name, value)
         if text is None:
             self.choice_prev[name] = index
             self.send_setting(name, value)
             return
-        prev = self.choice_prev.get(name, 0)
 
         def answer(_alert, response):
             if response == "continue":
@@ -640,17 +705,27 @@ class MonitorWindow(Adw.ApplicationWindow):
         row, options = self.choice_rows["preset"]
         self.gain_group.set_visible(options[row.get_selected()][1] == "user")
 
+    def change_text(self, name, value):
+        """What the status bar says while a change is applied, in the menu's own words:
+        "Applying LowBlue Mode to Level 3…"."""
+        label = self.setting_labels.get(name, name.replace("-", " ").capitalize())
+        shown = self.value_labels.get(name, {}).get(str(value), str(value))
+        return f"Applying {label} to {shown}…"
+
     def send_setting(self, name, value):
         """Send `monitor set <name> <value>` in the background. A newer value that
         arrives while one is being sent replaces any older waiting one."""
         self.pending[name] = value
         if name not in self.sending:
             self.sending.add(name)
-            self.begin_busy(f"Applying {name.replace('-', ' ')}…")
+            self.begin_busy(self.change_text(name, value))
             self.flush_setting(name)
+        else:  # the one being sent is replaced by this newer one
+            self.status_label.set_label(self.change_text(name, value))
 
     def flush_setting(self, name):
         value = self.pending.pop(name)
+        self.expected[name] = str(value)
 
         def work():
             ok, text = run_monitor("set", name, str(value))
@@ -662,15 +737,17 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.pending.pop(name, None)
                 self.sending.discard(name)
                 self.end_busy()
-                self.toast(text or "The monitor did not respond")
+                self.toast(text or "The monitor did not respond", error=True)
                 self.load_picture()  # show what the monitor really has
             elif name in self.pending:
                 self.flush_setting(name)
             else:
                 self.sending.discard(name)
                 self.end_busy()
-                if name in ("mode", "lowblue"):  # the mode's preset changed other values: show them
-                    self.load_picture()
+                # Read the monitor back after every change, even while paused: it shows what the
+                # monitor really has (a mode's preset changes other values too), and says so if
+                # it did not take the value.
+                self.load_picture()
             return False
 
         threading.Thread(target=work, daemon=True).start()
@@ -681,6 +758,7 @@ class MonitorWindow(Adw.ApplicationWindow):
         if self.loading_picture or self.debounce or self.pending or self.sending:
             return
         self.loading_picture = True
+        self.begin_read()
 
         def work():
             ok, text = run_monitor("picture")
@@ -688,20 +766,23 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         def finish(ok, text):
             self.loading_picture = False
+            self.end_read(ok)
             if self.debounce or self.pending or self.sending:
                 return False  # the user moved something meanwhile: it wins
             if not ok:
                 self.banner.set_revealed(True)
                 if announce:
-                    self.toast(text or "The monitor did not answer")
+                    self.toast(text or "The monitor did not answer", error=True)
                 return False
             self.banner.set_revealed(False)
+            readings = {}
             self.picture_updating = True
             for line in text.splitlines():
                 parts = line.split()
                 if len(parts) < 2 or parts[1] == "n/a":
                     continue
                 name, value = parts[0], parts[1]
+                readings[name] = value
                 if name in self.scales and value.isdigit():
                     self.scales[name].set_value(int(value))
                 elif name == "mute":
@@ -713,7 +794,14 @@ class MonitorWindow(Adw.ApplicationWindow):
                         row.set_selected(values.index(value))
                         self.choice_prev[name] = values.index(value)
             self.picture_updating = False
-            if announce:
+            refused = [
+                f"{n}: the monitor reports '{readings[n]}', not '{v}'"
+                for n, v in self.expected.items() if n in readings and readings[n] != v
+            ]
+            self.expected.clear()
+            if refused:
+                self.toast("The monitor did not take it (is its own menu open?) " + "; ".join(refused), error=True)
+            elif announce:
                 self.toast("Read from the monitor")
             return False
 
@@ -784,8 +872,16 @@ class MonitorWindow(Adw.ApplicationWindow):
         else:
             self.spinner.stop()
 
-    def toast(self, text):
-        self.toasts.add_toast(Adw.Toast(title=text, timeout=3))
+    def toast(self, text, error=False):
+        """A short message at the bottom of the window. Errors are red, stay longer, and are
+        repeated in the status bar (also red)."""
+        if error:
+            text = text.removeprefix("monitor: ")  # the command line's prefix means nothing here
+            label = Gtk.Label(label=text, wrap=True, css_classes=["error"])
+            self.toasts.add_toast(Adw.Toast(custom_title=label, timeout=ERROR_SECONDS))
+            self.status_then_ready(text, error=True)
+        else:
+            self.toasts.add_toast(Adw.Toast(title=text, timeout=3))
 
     def remember(self):
         self.state.update(
@@ -816,14 +912,41 @@ class MonitorWindow(Adw.ApplicationWindow):
         for page in self.pages.values():
             page.set_sensitive(free)
 
-    def begin_busy(self, text):
-        """Show `text` in the status bar and make the controls read-only."""
-        self.busy_count += 1
+    def show_status(self, text, spinning):
+        """Put `text` in the status bar (with the spinner running or not)."""
+        self.status_label.remove_css_class("error")
         if self.busy_hide_source is not None:
             GLib.source_remove(self.busy_hide_source)
             self.busy_hide_source = None
         self.status_label.set_label(text)
-        self.status_spinner.start()
+        if spinning:
+            self.status_spinner.start()
+        else:
+            self.status_spinner.stop()
+
+    def status_then_ready(self, text, error=False):
+        """Say `text` for a moment (a finished read or change; an error is red and stays
+        longer), then go back to Ready."""
+        self.show_status(text, False)
+        if error:
+            self.status_label.add_css_class("error")
+            self.error_until = time.monotonic() + ERROR_SECONDS
+
+        def idle():
+            self.busy_hide_source = None
+            if self.busy_count == 0 and self.read_count == 0:
+                self.status_label.remove_css_class("error")
+                self.status_label.set_label(self.ready_text())
+            return False
+
+        seconds = ERROR_SECONDS if error else STATUS_HOLD_SECONDS
+        self.busy_hide_source = GLib.timeout_add(int(seconds * 1000), idle)
+
+    def begin_busy(self, text):
+        """A change is being applied: say so and make the controls read-only."""
+        self.busy_count += 1
+        self.error_until = 0.0  # a new change replaces an error
+        self.show_status(text, True)
         self.refresh_lock()
 
     def end_busy(self):
@@ -831,16 +954,22 @@ class MonitorWindow(Adw.ApplicationWindow):
         self.refresh_lock()
         if self.busy_count:
             return
-        self.status_spinner.stop()
-        self.status_label.set_label("Done")
+        if self.read_count:  # a read started meanwhile
+            self.show_status(STATUS_READING, True)
+        else:
+            self.status_then_ready("Done")
 
-        def idle():  # "Done" stays a moment, then the bar goes back to "Ready"
-            self.busy_hide_source = None
-            if self.busy_count == 0:
-                self.status_label.set_label(STATUS_READY)
-            return False
+    def begin_read(self):
+        """Reading from the monitor starts. Reads never lock the controls, and what a change
+        is saying in the bar wins over them."""
+        self.read_count += 1
+        if self.busy_count == 0 and time.monotonic() >= self.error_until:
+            self.show_status(STATUS_READING, True)
 
-        self.busy_hide_source = GLib.timeout_add(int(BUSY_MIN_SECONDS * 1000), idle)
+    def end_read(self, ok):
+        self.read_count = max(0, self.read_count - 1)
+        if self.busy_count == 0 and self.read_count == 0 and (time.monotonic() >= self.error_until or not ok):
+            self.status_then_ready(STATUS_READ_DONE if ok else STATUS_READ_FAILED, error=not ok)
 
     @staticmethod
     def busy_text(args):
@@ -864,14 +993,16 @@ class MonitorWindow(Adw.ApplicationWindow):
         except (AttributeError, TypeError):
             return False
 
-    def run_async(self, args, done):
+    def run_async(self, args, done, text=None):
         """Run `monitor <args>` off the UI thread, then call done(ok, text). Anything but
         a read shows what is being applied in the status bar and locks the controls."""
         self.set_busy(True)
         changes = args[0] != "status"
         if changes:
             self.last_apply = time.monotonic()
-            self.begin_busy(self.busy_text(args))
+            self.begin_busy(text or self.busy_text(args))
+        else:
+            self.begin_read()
 
         def work():
             ok, text = run_monitor(*args)
@@ -882,7 +1013,11 @@ class MonitorWindow(Adw.ApplicationWindow):
             if changes:
                 self.last_apply = time.monotonic()  # settle time counts from the end
                 self.end_busy()
+            else:
+                self.end_read(ok)
             done(ok, text)
+            if changes and ok and args[0] in ("pbp", "input", "swap"):
+                self.read_status()  # show what the monitor really reports
             return False
 
         threading.Thread(target=work, daemon=True).start()
@@ -904,7 +1039,7 @@ class MonitorWindow(Adw.ApplicationWindow):
                     self.toast("Read from the monitor: PBP is off")
             else:
                 self.pbp_row.set_subtitle(NO_LINK_SUBTITLE)
-                self.toast(text or "The monitor did not answer")
+                self.toast(text or "The monitor did not answer", error=True)
 
         self.run_async(["status"], done)
 
@@ -920,13 +1055,34 @@ class MonitorWindow(Adw.ApplicationWindow):
             self.single_row.set_selected(keys.index(mine))
             self.remember()
 
+    def ready_text(self):
+        return STATUS_PAUSED if self.paused else STATUS_READY
+
+    def set_paused(self, paused):
+        """Stop (or resume) every automatic read of the monitor."""
+        self.paused = bool(paused)
+        self.pause_button.set_icon_name(
+            "media-playback-start-symbolic" if self.paused else "media-playback-pause-symbolic"
+        )
+        self.pause_button.set_tooltip_text(
+            "Resume the automatic reading of the monitor"
+            if self.paused
+            else "Pause the automatic reading of the monitor (so its own menu can be used)"
+        )
+        self.arm_poll()  # removes the timer while paused
+        self.pause_banner.set_revealed(self.paused)
+        if self.busy_count == 0:
+            self.status_label.set_label(self.ready_text())
+        if not self.paused:
+            self.poll_status()  # one read to catch up with what changed meanwhile
+
     def arm_poll(self):
-        """(Re)start the background-check timer with the current interval."""
+        """(Re)start the background-check timer with the current interval (not while paused)."""
         if self.poll_source is not None:
             GLib.source_remove(self.poll_source)
             self.poll_source = None
         seconds = self.state["poll_seconds"]
-        if seconds > 0:
+        if seconds > 0 and not self.paused:
             self.poll_source = GLib.timeout_add_seconds(seconds, self.poll_status)
 
     def set_poll_seconds(self, seconds):
@@ -1042,9 +1198,12 @@ class MonitorWindow(Adw.ApplicationWindow):
     def poll_status(self):
         """Quietly re-read PBP from the monitor (no spinner, no toast).
         Returns True so it can also be used as a repeating timer."""
+        if self.paused:
+            return False  # also ends the timer
         if self.busy or self.polling:
             return True
         self.polling = True
+        self.begin_read()
 
         def work():
             ok, text = run_monitor("status")
@@ -1052,6 +1211,7 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         def finish(ok, text):
             self.polling = False
+            self.end_read(ok)
             if self.busy:  # the user started something meanwhile: it wins
                 return False
             if ok and "PBP: on" in text:
@@ -1081,12 +1241,15 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.toast("PBP turned " + ("on" if on else "off"))
             else:
                 self.set_pbp(not on)  # put the switch back
-                self.toast(text or "The monitor did not respond")
+                self.toast(text or "The monitor did not respond", error=True)
 
         # Turning PBP on splits the screen; the right half shows the input set in the
         # monitor's menu (the monitor remembers it). Only the left input is sent.
         args = ["pbp", "on", self.key_of(self.left_row)] if on else ["pbp", "off"]
-        self.run_async(args, done)
+        self.run_async(
+            args, done,
+            f"Applying Picture by picture (PBP) to {'On' if on else 'Off'}… (this can take several seconds)",
+        )
 
     def on_apply_single(self):
         key = self.key_of(self.single_row)
@@ -1094,9 +1257,11 @@ class MonitorWindow(Adw.ApplicationWindow):
         def done(ok, text):
             if ok:
                 self.remember()
-            self.toast(f"Input: {key}" if ok else (text or "Failed"))
+            self.toast(f"Input: {key}" if ok else (text or "Failed"), error=not ok)
 
-        self.run_async(["input", key], done)
+        self.run_async(
+            ["input", key], done, f"Applying Source to {self.single_row.get_selected_item().get_string()}…"
+        )
 
     def on_apply_dual(self):
         left = self.key_of(self.left_row)
@@ -1104,9 +1269,11 @@ class MonitorWindow(Adw.ApplicationWindow):
         def done(ok, text):
             if ok:
                 self.remember()
-            self.toast(f"Left window: {left}" if ok else (text or "Failed"))
+            self.toast(f"Left window: {left}" if ok else (text or "Failed"), error=not ok)
 
-        self.run_async(["input", left], done)
+        self.run_async(
+            ["input", left], done, f"Applying Left window to {self.left_row.get_selected_item().get_string()}…"
+        )
 
     def on_swap(self):
         def done(ok, text):
@@ -1115,9 +1282,9 @@ class MonitorWindow(Adw.ApplicationWindow):
                 self.left_row.set_selected(r)
                 self.right_row.set_selected(l)
                 self.remember()
-            self.toast("Windows swapped" if ok else (text or "Failed"))
+            self.toast("Windows swapped" if ok else (text or "Failed"), error=not ok)
 
-        self.run_async(["swap"], done)
+        self.run_async(["swap"], done, "Swapping the left and right windows…")
 
 
 class App(Adw.Application):
