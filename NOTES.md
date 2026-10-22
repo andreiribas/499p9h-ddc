@@ -124,6 +124,10 @@ command.
 - **EB = SmartResponse**: 0 Off, 1 Fast, 2 Faster, 3 Fastest (one walk.sh round per step: only
   EB changed each time). The read reports a maximum of 1, which is wrong: the capability list
   gives EB the values 00-03.
+- **Picture Format = VCP 86**: Wide Screen 0x08, 4:3 0x02, 16:9 0xFF. Writing 0xFF is not
+  accepted (verification fails; with --noverify the value stays unchanged): 16:9 can only be
+  chosen in the monitor's menu. **1:1 = 0x01** (confirmed with walk.sh: FF -> 01, and writing
+  01 works). Movie 1 and Movie 2 are greyed out in the menu.
 - **PBP Input** (the menu's name for the right window's source): one round showed code `60`
   moving (0x10 -> 0x11). `60` is what sets the LEFT window, and reading it has been
   unreliable, so this may mean that reading `60` follows the right window. Not settled: PBP

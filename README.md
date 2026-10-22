@@ -49,7 +49,8 @@ monitor brightness [N|+N|-N]    show / set / adjust (also contrast, sharpness, v
 monitor mute|preset|gamma|mode [value]
 monitor get <setting> | set <setting> <value>
 monitor gain-red|gain-green|gain-blue [N|+N|-N]   RGB gain 0-100 (VCP 16/18/1A)
-monitor scaling noscale|aspect|stretch     (VCP 86)
+monitor scaling widescreen|4:3|1:1     the menu's Picture Format (VCP 86). The monitor reports 16:9 (0xFF) but
+                                ignores it when written: pick 16:9 in its menu. (Old names: stretch, aspect, noscale)
 monitor smartcontrast on|off    (VCP F0, found with walk.sh on this monitor; its menu warns that "on"
                                 can increase the energy consumption. The command does not ask, the app does)
 monitor smartresponse off|fast|faster|fastest   (VCP EB, found with walk.sh: the monitor's response-time setting)

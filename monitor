@@ -21,7 +21,7 @@
 #   monitor mute|preset|gamma|mode [value]   mute: on off; preset: srgb 5000k 6500k 7500k
 #                           8200k 9300k 11500k user; gamma: 1.8 2.0 2.2 2.4 2.6;
 #                           mode: standard productivity mixed movie games
-#   monitor scaling noscale|aspect|stretch   how a smaller picture fills the screen
+#   monitor scaling widescreen|4:3|1:1   the menu's Picture Format (16:9 is only shown, see README)
 #   monitor smartcontrast on|off    (found with walk.sh; the monitor warns that "on" can use more power)
 #   monitor smartresponse off|fast|faster|fastest   (found with walk.sh: pixel response time)
 #   monitor osd on|off      show the monitor's menu or not (the buttons still work; `osd on` brings it back)
@@ -224,6 +224,10 @@ smartresponse off 0
 smartresponse fast 1
 smartresponse faster 2
 smartresponse fastest 3
+scaling widescreen 8
+scaling 4:3 2
+scaling 16:9 255
+scaling 1:1 1
 scaling noscale 1
 scaling aspect 2
 scaling stretch 8
@@ -251,7 +255,7 @@ language hungarian 26
 language polish 30
 language ukrainian 36"
 choice_num() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $2 == n {print $3}'; }
-choice_name() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $3 == n {print $2}'; }
+choice_name() { echo "$CHOICES" | awk -v f="$1" -v n="$2" '$1 == f && $3 == n {print $2; exit}'; }
 
 # ---- imported controls ----------------------------------------------------
 # More controls from a file the user wrote or got from someone with the same monitor
@@ -432,7 +436,11 @@ set_setting() {
   fi
   # the monitor takes sharpness 0-10: the menu's 0-100 is rounded to its nearest step of 10
   if [ "$1" = sharpness ]; then n=$(sharp_to_code "$n"); fi
-  ddc_set "$code" "$n" || die "could not set $1: $NO_LINK"
+  # some values are reported but not accepted by the monitor
+  case "$1:$val" in
+    scaling:16:9) die "scaling: the monitor shows 16:9 but ignores it over DDC; choose 16:9 in the monitor's menu" ;;
+  esac
+  ddc_set "$code" "$n" || die "could not set $1: the monitor did not accept the value, or it is not answering this computer (it may be showing another input)"
   if [ "$1" = sharpness ]; then echo "$1 $(sharp_from_code "$n")"
   elif is_range "$1"; then echo "$1 $n"; else echo "$1 $val"; fi
 }

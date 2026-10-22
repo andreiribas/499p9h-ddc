@@ -9,3 +9,4 @@ SmartResponse: Fast to Faster | Set SmartResponse to Fast now (it is Off). Then 
 SmartResponse: Faster to Fastest | Set SmartResponse to Faster now. Then in step 3 change it from Faster to Fastest.
 Picture Format | Picture Format is Wide Screen now: do not change it yet. In step 3 change it to the NEXT option the menu offers, and write down its name.
 Picture Format: next option | Set Picture Format to the second option now. In step 3 change it to the third option (answer x if it only has two) and write down its name.
+Picture Format: 1:1 | Set Picture Format to 16:9 now (it is Wide Screen). Then in step 3 change it to 1:1. (Movie 1 and Movie 2 are greyed out in the menu, so they cannot be walked.)

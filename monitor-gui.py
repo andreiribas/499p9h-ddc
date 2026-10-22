@@ -84,7 +84,8 @@ CATEGORIES = [
         ("choice", "smartcontrast", "SmartContrast", [("Off", "off"), ("On", "on")]),
         ("choice", "gamma", "Gamma", [(g, g) for g in ("1.8", "2.0", "2.2", "2.4", "2.6")]),
         ("choice", "scaling", "Picture format", [
-            ("No scaling", "noscale"), ("Keep aspect ratio", "aspect"), ("Stretch to fill", "stretch")]),
+            ("Wide screen", "widescreen"), ("4:3", "4:3"), ("16:9 (set in the monitor's menu)", "16:9"),
+            ("1:1", "1:1")]),
         ("choice", "mode", "Display mode", [(n, n.lower()) for n in
             ("Standard", "Productivity", "Mixed", "Movie", "Games")]),
     ]),
