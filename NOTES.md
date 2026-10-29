@@ -201,3 +201,18 @@ the monitor's own mode is on at that level. Tested on the real monitor: levels 1
 LowBlue Mode off (colour temperature User). A hidden code that selects the real level has not been found;
 the write-only codes (B0, CF, DE, A2, 76 ...) were not probed.
 
+## HDMI EDID Switch (found with walk.sh, 2026-10-29)
+
+The menu has HDMI1 EDID Switch and HDMI2 EDID Switch, each with the values 1 and 2 (1 is the default).
+Changing HDMI1 EDID Switch from 1 to 2 changes the EDID the monitor announces on HDMI 1: the 384-byte EDID
+(base block, CTA-861 extension, DisplayID extension with 5120x1440 at 30/60/70 Hz) becomes 256 bytes
+without the DisplayID extension, so the computer can no longer use 5120x1440 and the maximum is 4K. The
+HDMI 2.0 block (600 MHz), HDR and the other modes stay. No DDC code changed, so it cannot be set from the
+app (and it would make the screen reconnect). Set it back to 1 in the monitor's menu to get 5120x1440.
+HDMI2 EDID Switch (values 1 and 2 as well) is presumably the same thing for the HDMI 2 port, but that is
+**unverified**: nothing is connected to HDMI 2 and this laptop is on HDMI 1, so what it does to HDMI 2's EDID
+was not observed (it would need a computer connected to HDMI 2). What was checked, with a clean round: changing
+only HDMI2 EDID Switch (2 -> 1) left the EDID on HDMI-1 unchanged and moved no DDC code, so it does not affect
+HDMI-1's EDID, and neither entry can be set over DDC.
+walk.sh sees this by comparing the EDID before and after (edid-summary.py decodes it).
+

@@ -11,6 +11,17 @@
 #   ./walk.sh                      suggests the next setting to look for (one round per run)
 #   ./walk.sh list                 the settings still to look for, and what the log says
 #   ./walk.sh "Name" | 3           walk that setting (by name, or its number in the list)
+#   ./walk.sh again                walk the last setting that was walked once more (to check a result)
+#   ./walk.sh note "text"          add a note (a correction, what the menu really said) to the last entry
+#
+# At step 1 you can type what the setting is set to now, and at step 3 what you changed it to
+# ("1", "2", "Level 3" ...) before pressing Enter: the log records "From ... To ...", so the data is
+# right even when the setting was not as the list assumed. Enter alone is fine.
+#
+# It also copies the monitor's EDID (what it tells this computer over the HDMI / DisplayPort cable
+# about its modes, HDR and so on) before and after, and says what changed: that is how a setting
+# such as "HDMI EDID Switch" shows up, whether or not it has a DDC code. Read-only; the EDID comes
+# from /sys/class/drm and is decoded by edid-summary.py.
 #
 # The first run probes all 256 codes (about 20 s) to learn which ones answer, and
 # remembers them in snapshots/walk-codes.txt; every later read asks only those, in
@@ -246,6 +257,49 @@ run_timed() {
   cat "$out"; rm -f "$out"
 }
 
+# edid_path: the EDID file of the connected screen that is this monitor (by its model name)
+edid_path() {
+  model="${MONITOR_MODEL:-PHL 499P9}"
+  for c in /sys/class/drm/card*-*; do
+    [ "$(cat "$c/status" 2> /dev/null)" = connected ] || continue
+    if grep -q -a -F "$model" "$c/edid" 2> /dev/null; then echo "$c/edid"; return 0; fi
+  done
+  return 1
+}
+
+# edid_snapshot FILE [wait]: copy the EDID; with "wait", give the monitor up to 10 s to be back
+# (changing an EDID setting makes it disconnect and announce itself again). An empty file means
+# it could not be read.
+edid_snapshot() {
+  tries=1; [ "${2:-}" = wait ] && tries=10
+  : > "$1"
+  while [ "$tries" -gt 0 ]; do
+    if p=$(edid_path); then cp "$p" "$1" 2> /dev/null; [ -s "$1" ] && return 0; fi
+    tries=$((tries - 1)); [ "$tries" -gt 0 ] && sleep 1
+  done
+  return 0
+}
+
+# edid_report BEFORE AFTER: says whether the EDID changed, and what the difference is
+edid_report() {
+  if [ ! -s "$1" ] || [ ! -s "$2" ]; then
+    echo "EDID: could not be read before or after (the monitor is not connected to this computer's HDMI or DisplayPort, or was still reconnecting)"
+    return 0
+  fi
+  if cmp -s "$1" "$2"; then echo "EDID: unchanged"; return 0; fi
+  sa=$(wc -c < "$1" | tr -d ' '); sb=$(wc -c < "$2" | tr -d ' ')
+  if [ "$sa" != "$sb" ]; then echo "EDID: CHANGED (size $sa -> $sb bytes)"
+  else echo "EDID: CHANGED ($(cmp -l "$1" "$2" 2> /dev/null | wc -l | tr -d ' ') bytes differ)"; fi
+  a=$(mktemp); b=$(mktemp)
+  python3 ./edid-summary.py "$1" > "$a" 2>&1; python3 ./edid-summary.py "$2" > "$b" 2>&1
+  if diff "$a" "$b" > /dev/null; then
+    echo "  (the differences are in details this summary does not show: use edid-decode on snapshots/walk-00.edid and walk-01.edid)"
+  else
+    diff "$a" "$b" | grep '^[<>]' | sed 's/^</  before:/; s/^>/  after: /'
+  fi
+  rm -f "$a" "$b"
+}
+
 # Everything that runs is inside main(), which the shell reads completely before
 # starting: editing this file while it is running cannot corrupt the run.
 main() {
@@ -271,6 +325,28 @@ next_item() {
   return 1
 }
 
+
+# "note": add a note to the last entry of the log
+case "${1:-}" in
+  note)
+    shift
+    [ -n "$*" ] || { echo 'usage: ./walk.sh note "text"'; exit 1; }
+    grep -q '^## ' "$log" 2> /dev/null || { echo "Nothing has been walked yet."; exit 1; }
+    printf 'Note: %s\n' "$*" >> "$log"
+    echo "Added to the last entry: $(awk '/^## / {n = substr($0, 4)} END {print n}' "$log")"
+    exit 0
+    ;;
+esac
+
+# "again": the setting walked last, as the log has it
+case "${1:-}" in
+  again | repeat)
+    last=$(awk '/^## / {n = substr($0, 4)} END {print n}' "$log" 2> /dev/null)
+    [ -n "$last" ] || { echo "Nothing has been walked yet."; exit 1; }
+    echo "Repeating: $last"
+    set -- "$last"
+    ;;
+esac
 
 # which setting: the one given (a number from `list` or a name), else the next suggested
 if [ $# -gt 0 ]; then
@@ -312,22 +388,34 @@ if [ -n "$setup" ]; then
 else
   echo "  Nothing to set up: leave the monitor exactly as it is."
 fi
-printf '  Press Enter when ready, and the script reads the monitor.  (s + Enter: skip this setting for now;  x + Enter: this monitor has no such setting) '
+printf '  Press Enter when ready, and the script reads the monitor.\n  (you can type what it is set to now first;  s + Enter: skip for now;  x + Enter: this monitor has no such setting) '
 read -r answer
 answer_special "$answer"
+from=$answer
 echo
 echo "Step 2 of 3: reading the monitor before your change (automatic, a few seconds)."
+edid_snapshot "snapshots/walk-00.edid"
 run_timed "Read the monitor before your change" fast_scan > "snapshots/walk-00.txt"
 echo
 echo "Step 3 of 3: now change $name on the monitor with its buttons."
-printf '  Press Enter here only AFTER you have changed it.  (s + Enter: skip;  x + Enter: no such setting) '
+printf '  Press Enter here only AFTER you have changed it.\n  (you can type what you changed it to first;  s + Enter: skip;  x + Enter: no such setting) '
 read -r answer
 answer_special "$answer"
+to=$answer
 echo
 echo "Reading the monitor after your change (automatic)."
+if [ -s "snapshots/walk-00.edid" ]; then   # a setting that changes the EDID reconnects the monitor
+  edid_snapshot "snapshots/walk-01.edid" wait
+else
+  edid_snapshot "snapshots/walk-01.edid"
+fi
 run_timed "Read the monitor after your change" fast_scan > "snapshots/walk-01.txt"
 d=$(./diffscan.sh walk-00 walk-01 | grep -vE '^[<>] (AC|AE|20):')
 printf '\n## %s\n_%s_\n' "$name" "$(date +%F)" >> "$log"
+if [ -n "$from$to" ]; then
+  printf 'From: %s -> To: %s\n' "${from:-?}" "${to:-?}" >> "$log"
+  echo "Recorded: from ${from:-?} to ${to:-?}"
+fi
 if [ -n "$d" ]; then
   sum=$(summarize "$d")
   echo "Changed:"; echo "$sum"
@@ -350,6 +438,8 @@ else
   echo "No readable code changed (this setting may have no DDC code)."
   echo "No readable code changed." >> "$log"
 fi
+edid_report "snapshots/walk-00.edid" "snapshots/walk-01.edid" | tee -a "$log.tmp"
+{ echo '```'; cat "$log.tmp"; echo '```'; } >> "$log"; rm -f "$log.tmp"
 echo "Logged in $log."
 if nxt=$(next_item); then echo "Run ./walk.sh again for the next one: $nxt"; else echo "That was the last one in the list."; fi
 }

@@ -72,6 +72,13 @@ monitor language <name>         the monitor's menu language (VCP CC): english fr
 
 To find more controls, `./walk.sh` is a guided, read-only search: you change one setting
 at a time with the monitor's buttons and it shows which codes changed (see `walk.sh`).
+It also copies the monitor's EDID (what the monitor tells the computer about its modes, HDR and so on)
+before and after, and says what changed: that is how a menu entry such as "HDMI EDID Switch" shows up,
+with or without a DDC code. At step 1 and step 3 you can type what the setting is set to and what you changed it to ("1", "Level 3" ...),
+and the log records it; `./walk.sh note "text"` adds a correction to the last entry.
+`./walk.sh again` walks the last setting once more, to check a result; `./walk.sh <number>` (from `./walk.sh list`) repeats any item.
+`edid-summary.py <file>` prints an EDID's main facts (for example
+`edid-summary.py /sys/class/drm/card1-HDMI-A-1/edid`).
 
 Picture settings are standard DDC codes: brightness (`10`), contrast (`12`) and
 volume (`62`) 0-100, sharpness (`87`) 0-100 like the monitor's menu (the monitor has 11

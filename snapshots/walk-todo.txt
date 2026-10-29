@@ -24,3 +24,10 @@ LowBlue Mode: 1 to 2 | Set LowBlue Mode to level 1 now (in the monitor's menu (t
 LowBlue Mode: 2 to 3 | Set LowBlue Mode to level 2 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 change it to level 3.
 LowBlue Mode: 3 to 4 | Set LowBlue Mode to level 3 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 change it to level 4.
 LowBlue Mode: 4 to Off | Set LowBlue Mode to level 4 now (in the monitor's menu (the first item, not the SmartImage button)). Then in step 3 turn it Off.
+
+
+HDMI1 EDID Switch: 1 to 2 | In the monitor's menu (HDMI EDID Switch) HDMI1 EDID Switch is on 1 (the 5120x1440 modes are available). Do not change it yet. In step 3 change it to 2. The screen may go black for a moment; 5120x1440 disappears and the maximum becomes 4K. walk.sh reports what the EDID change was.
+HDMI1 EDID Switch: 2 to 1 | HDMI1 EDID Switch is on 2 now. In step 3 change it back to 1 (this brings back the 5120x1440 modes).
+HDMI1 EDID Switch: 1 to 2 (again) | HDMI1 EDID Switch is on 1 again. In step 3 change it to 2 once more, to check that the EDID change repeats; then change it back to 1 yourself afterwards.
+HDMI2 EDID Switch: 1 to 2 | HDMI2 EDID Switch is on 1 (the default). Do not change it yet. In step 3 change it to 2. (Presumably like HDMI1's but for the HDMI 2 port; nothing is connected to HDMI 2 and this laptop is on HDMI 1, so its effect cannot be seen here: the round only shows whether a DDC code moves or HDMI-1's EDID changes.)
+HDMI2 EDID Switch: 2 to 1 | HDMI2 EDID Switch is on 2 now. In step 3 change it back to 1.
