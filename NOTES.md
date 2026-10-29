@@ -216,3 +216,12 @@ only HDMI2 EDID Switch (2 -> 1) left the EDID on HDMI-1 unchanged and moved no D
 HDMI-1's EDID, and neither entry can be set over DDC.
 walk.sh sees this by comparing the EDID before and after (edid-summary.py decodes it).
 
+## Input menu (found with walk.sh, 2026-10-29)
+
+The monitor's Input menu lists "1 HDMI 2.0", "2 HDMI 2.0", DisplayPort, USB C and **Auto** (an On/Off switch, On by
+default). The four inputs are VCP 60, which the app already uses (HDMI 1 = 0x12, HDMI 2 = 0x11, USB-C = 0x0f,
+DisplayPort = 0x10; the monitor's menu numbers the HDMI ports the other way round from DDC). Auto: turning it Off and
+On again moved no readable code and left the EDID unchanged, so it has no readable DDC code. Tested with only HDMI 1
+connected, so what it does when a second source appears was not seen, and a code that can only be written would not
+show in this kind of search.
+

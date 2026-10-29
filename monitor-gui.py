@@ -8,6 +8,7 @@ so the source pickers show what was last applied from here, remembered in
 ~/.config/monitor-ctl/state.json. Only PBP on/off is read from the monitor.
 """
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -35,6 +36,68 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+MODEL = os.environ.get("MONITOR_MODEL", "PHL 499P9")  # as in the monitor's EDID name
+
+
+def load_edid_helper():
+    """edid-summary.py next to the app (it reads what a monitor announces); None if missing."""
+    try:
+        spec = importlib.util.spec_from_file_location("edid_summary", os.path.join(HERE, "edid-summary.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (OSError, ImportError, AttributeError, SyntaxError):
+        return None
+
+
+def find_monitor_edid(root="/sys/class/drm"):
+    """(connector name such as 'HDMI-A-1', EDID bytes) of the screen that is this monitor, or
+    (None, None) when it is not connected to this computer's video outputs (it is then probably
+    showing another input). Reading it asks the monitor nothing: the kernel has it already."""
+    for status in sorted(glob.glob(os.path.join(root, "card*-*/status"))):
+        conn = os.path.dirname(status)
+        try:
+            with open(status) as f:
+                if f.read().strip() != "connected":
+                    continue
+            with open(os.path.join(conn, "edid"), "rb") as f:
+                edid = f.read()
+        except OSError:
+            continue
+        if MODEL.encode() in edid:
+            return os.path.basename(conn).split("-", 1)[1], edid
+    return None, None
+
+
+def describe_edid(helper, name, edid):
+    """(title, text) for the Input page: what the monitor announces to this computer."""
+    if name is None:
+        return "Not connected to this computer", (
+            "The monitor is not on one of this computer's HDMI or DisplayPort outputs right now "
+            "(it is probably showing another input), so there is nothing to read."
+        )
+    if name.startswith("HDMI"):
+        number = name.rsplit("-", 1)[-1]
+        title = f"HDMI {number}"
+    elif name.startswith(("DP-", "USB")):
+        title, number = "DisplayPort / USB-C", None
+    else:
+        title, number = name, None
+    if helper is None or not edid:
+        return title, "The monitor's list of modes could not be read."
+    found = helper.modes(edid)
+    if not found:
+        return title, "The monitor announces no modes."
+    wide = [m for m in found if m[0] >= 5120]  # the 32:9 modes (5120 wide)
+    if wide:
+        w, h, hz = max(wide, key=lambda m: m[2])
+        return title, f"Full list: up to {w}×{h} at {hz} Hz is available."
+    w, h, hz = max(found, key=lambda m: (m[0] * m[1], m[2]))  # by pixels: 4K beats 2560x1440
+    text = f"Limited list: the largest mode is {w}×{h} at {hz} Hz; 5120×1440 is not offered."
+    if number:
+        text += (f" On this monitor, setting HDMI{number} EDID Switch to 1 in its menu offers the "
+                 "5120×1440 modes again.")
+    return title, text
 MONITOR = os.path.join(HERE, "monitor")
 STATE_FILE = os.path.join(GLib.get_user_config_dir(), "monitor-ctl", "state.json")
 
@@ -325,6 +388,18 @@ class MonitorWindow(Adw.ApplicationWindow):
         )
         page.add(self.dual_group)
 
+        # What the monitor announces to this computer (its EDID): read from the system, never
+        # from the monitor, so it is safe to refresh at any time. It explains a missing 5120x1440.
+        self.edid_helper = load_edid_helper()
+        self.edid_group = Adw.PreferencesGroup(
+            title="What the monitor announces",
+            description="The modes the monitor tells this computer it can show (read-only).",
+        )
+        self.edid_row = Adw.ActionRow(title="", subtitle="")
+        self.edid_row.set_subtitle_lines(0)  # show all of the text
+        self.edid_group.add(self.edid_row)
+        page.add(self.edid_group)
+
         note = Adw.PreferencesGroup()
         label = Gtk.Label(
             label="The monitor cannot report which inputs it shows. The pickers show what "
@@ -397,7 +472,8 @@ class MonitorWindow(Adw.ApplicationWindow):
         # Another computer (or the monitor's buttons) can change PBP, so keep
         # checking: periodically, and whenever this window gets focus again.
         self.arm_poll()
-        self.connect("notify::is-active", lambda w, _p: w.is_active() and w.poll_status())
+        self.connect("notify::is-active", lambda w, _p: w.is_active() and (w.poll_status(), w.refresh_edid()))
+        self.refresh_edid()
 
     # ---- picture page ----------------------------------------------------
 
@@ -807,7 +883,19 @@ class MonitorWindow(Adw.ApplicationWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def refresh_edid(self):
+        """Update the "What the monitor announces" line (a read of the system's copy of the EDID:
+        nothing is asked of the monitor, so this also runs while the reading is paused)."""
+        name, edid = find_monitor_edid()
+        title, text = describe_edid(self.edid_helper, name, edid)
+        self.edid_row.set_title(title)
+        self.edid_row.set_subtitle(text)
+        self.edid_row.remove_css_class("warning")
+        if "Limited" in text:
+            self.edid_row.add_css_class("warning")
+
     def refresh(self, announce=False):
+        self.refresh_edid()
         if self.stack.get_visible_child_name() != "input":
             self.load_picture(announce=announce)
         else:

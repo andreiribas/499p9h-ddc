@@ -21,6 +21,57 @@ def timing(x):
     return clk, ha, va, round(clk * 1000 / ((ha + hb) * (va + vb)), 1)
 
 
+# The video codes (VIC) of the CTA-861 extension that matter here: code -> (width, height, Hz)
+VIC_MODES = {1: (640, 480, 60), 2: (720, 480, 60), 3: (720, 480, 60), 4: (1280, 720, 60),
+             16: (1920, 1080, 60), 19: (1280, 720, 50), 31: (1920, 1080, 50), 32: (1920, 1080, 24),
+             33: (1920, 1080, 25), 34: (1920, 1080, 30), 93: (3840, 2160, 24), 94: (3840, 2160, 25),
+             95: (3840, 2160, 30), 96: (3840, 2160, 50), 97: (3840, 2160, 60), 98: (4096, 2160, 24),
+             99: (4096, 2160, 25), 100: (4096, 2160, 30), 101: (4096, 2160, 50), 102: (4096, 2160, 60)}
+
+
+def modes(d):
+    """The (width, height, Hz) modes an EDID announces: detailed timings of the base block, of the
+    CTA-861 extension and of the DisplayID extension, and the standard video codes."""
+    found = set()
+    if len(d) < 128:
+        return found
+    for off in (54, 72, 90, 108):
+        x = d[off:off + 18]
+        if x[0] or x[1]:
+            _clk, ha, va, hz = timing(x)
+            found.add((ha, va, round(hz)))
+    for i in range(1, len(d) // 128):
+        e = d[i * 128:(i + 1) * 128]
+        if e[0] == 0x02:
+            end, p = e[2], 4
+            while p < end:
+                tag, ln = e[p] >> 5, e[p] & 31
+                if tag == 2:
+                    found.update(VIC_MODES[v & 0x7F] for v in e[p + 1:p + 1 + ln] if (v & 0x7F) in VIC_MODES)
+                p += 1 + ln
+            for off in range(end, 127, 18):
+                x = e[off:off + 18]
+                if x[0] or x[1]:
+                    _clk, ha, va, hz = timing(x)
+                    found.add((ha, va, round(hz)))
+        elif e[0] == 0x70:
+            p = 5
+            while p + 3 < 127:
+                tag, ln = e[p], e[p + 2]
+                pay = e[p + 3:p + 3 + ln]
+                if tag == 0x03:
+                    for k in range(0, len(pay) - 19, 20):
+                        t = pay[k:k + 20]
+                        clk = ((t[0] | t[1] << 8 | t[2] << 16) + 1) * 10
+                        ha, hb = (t[4] | t[5] << 8) + 1, (t[6] | t[7] << 8) + 1
+                        va, vb = (t[12] | t[13] << 8) + 1, (t[14] | t[15] << 8) + 1
+                        found.add((ha, va, round(clk * 1000 / ((ha + hb) * (va + vb)))))
+                p += 3 + ln
+                if ln == 0:
+                    break
+    return found
+
+
 def summarize(d):
     out = [f"{len(d)} bytes = {len(d) // 128} blocks"]
     b = d[:128]

@@ -68,6 +68,7 @@ looks_known() {
     *smartresponse*) echo "monitor smartresponse"; return 0 ;;
     *smartimage*) echo "monitor mode"; return 0 ;;
     *lowblue*) echo "monitor mode (lowblue) and the RGB gains"; return 0 ;;
+    "input: "*) echo "monitor input (VCP 60: it sets the left window; reading it is unreliable)"; return 0 ;;
     *smart*) return 0 ;;
   esac
   case "$l" in

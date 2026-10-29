@@ -31,3 +31,5 @@ HDMI1 EDID Switch: 2 to 1 | HDMI1 EDID Switch is on 2 now. In step 3 change it b
 HDMI1 EDID Switch: 1 to 2 (again) | HDMI1 EDID Switch is on 1 again. In step 3 change it to 2 once more, to check that the EDID change repeats; then change it back to 1 yourself afterwards.
 HDMI2 EDID Switch: 1 to 2 | HDMI2 EDID Switch is on 1 (the default). Do not change it yet. In step 3 change it to 2. (Presumably like HDMI1's but for the HDMI 2 port; nothing is connected to HDMI 2 and this laptop is on HDMI 1, so its effect cannot be seen here: the round only shows whether a DDC code moves or HDMI-1's EDID changes.)
 HDMI2 EDID Switch: 2 to 1 | HDMI2 EDID Switch is on 2 now. In step 3 change it back to 1.
+Input Auto: On to Off | In the monitor's Input menu (1 HDMI 2.0, 2 HDMI 2.0, DisplayPort, USB C, Auto) Auto has the values On and Off, and it is On now. Do not change it yet. In step 3 turn Auto Off. (With Auto On the monitor picks the input by itself; with only this computer connected, nothing should switch.)
+Input Auto: Off to On | Auto is Off now. In step 3 turn Auto back On (this puts it back as it was).

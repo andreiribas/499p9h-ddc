@@ -97,7 +97,7 @@ and the controls of the one you click are on the right (on a narrow window they 
 
 | Menu | Controls |
 |---|---|
-| Input | the PBP switch, a source picker for one screen or a left and a right picker, Swap and Apply |
+| Input | the PBP switch, a source picker for one screen or a left and a right picker, Swap and Apply, and a read-only line with what the monitor announces to this computer (below) |
 | Picture | SmartImage (the modes), brightness, contrast, sharpness, SmartResponse, SmartContrast, gamma, picture format |
 | Colour | LowBlue Mode (off, levels 1-4), colour temperature, and the red/green/blue gain when it is User (writing a gain makes the monitor switch to the User preset by itself) |
 | Audio | volume, mute |
@@ -121,6 +121,11 @@ afterwards, so the screen shows what the monitor really has. The status bar name
 out of date, so a banner says so ("Read now" reads), and picking the item a dropdown already shows still
 sends it. If the monitor does not take a value (for example because its own menu is open), a message
 says what it reports instead.
+
+The Input page ends with "What the monitor announces": the modes the monitor tells this computer it can show
+(its EDID, read from the system, so nothing is asked of the monitor and it works while the reading is
+paused). It says "Full list: up to 5120×1440 at 70 Hz" or, when the monitor's HDMI EDID Switch is on 2,
+"Limited list: ... 5120×1440 is not offered", with a hint to set the switch back to 1 in the monitor's menu.
 
 Turning on a setting that can increase the monitor's energy consumption (SmartContrast, and
 imported controls marked `energy`) asks for confirmation first, like the monitor's own menu.

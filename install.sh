@@ -36,7 +36,7 @@ fi
 
 # --- copy files ------------------------------------------------------------
 mkdir -p "$LIB" "$BIN" "$(dirname "$DESKTOP")"
-install -m 755 "$here/monitor" "$here/monitor-gui.py" "$LIB/"
+install -m 755 "$here/monitor" "$here/monitor-gui.py" "$here/edid-summary.py" "$LIB/"
 ln -sf "$LIB/monitor" "$BIN/monitor"
 ln -sf "$LIB/monitor-gui.py" "$BIN/monitor-gui"
 
